@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.cluster import KMeans
 from sklearn.cluster import DBSCAN
 
 class LaneDetection:
@@ -10,19 +11,21 @@ class LaneDetection:
 
 	def detect(self, state_image):
 		self.frame_counter += 1
-		if self.frame_counter < 100:
+		if self.frame_counter < 60:
 			return
 
+		masked_img = state_image[0:84, ...]
+		binary_img = self.convert_to_binary(masked_img)
+
 		# Convert to grayscale and preprocess
-		gray = np.mean(state_image[0:84, ...], axis=2).astype(np.float32)
-		filtered = self.filterEdges(gray)
-		self.applyTreshold(filtered, np.percentile(filtered, 95))
+		filtered = self.filterEdges(binary_img)
+		self.applyTreshold(filtered, np.percentile(filtered, 80))
 
 		# Extract edge points
 		edge_points = np.column_stack(np.where(filtered == 255))
 
 		# Use DBSCAN for clustering
-		dbscan = DBSCAN(eps=1.4, min_samples=1).fit(edge_points)  # Adjust `eps` and `min_samples` as needed
+		dbscan = DBSCAN(eps=4, min_samples=1).fit(edge_points)  # eps: how close points need to be to be considered in the same cluster
 		labels = dbscan.labels_
 
 		# Separate points into clusters
@@ -66,6 +69,22 @@ class LaneDetection:
 
 		self.debug_image = debug_image
 
+	def convert_to_binary(self, image):
+		# Reshape the image into a 2D array of pixels (rows * cols, channels)
+		pixels = image.reshape(-1, image.shape[-1])
+
+		# Apply KMeans clustering with 2 clusters
+		kmeans = KMeans(n_clusters=2, random_state=0).fit(pixels)
+		labels = kmeans.labels_
+
+		# Reshape the labels back to the original image shape
+		binary_image = labels.reshape(image.shape[:2])
+
+		# Map the two clusters to 0 and 255
+		binary_image = (binary_image * 255).astype(np.uint8)
+
+		return binary_image
+
 	def filterEdges(self, image):
 		# Sobel kernels
 		sobel_x = np.array([[1, 0, -1],
@@ -83,7 +102,7 @@ class LaneDetection:
 		magnitude = np.sqrt(grad_x**2 + grad_y**2)
 		
 		# mask the car and then normalize to 0-255
-		magnitude[64:78, 44:52] = np.mean(magnitude)
+		magnitude[64:78, 44:52] = 0
 		normalized = (magnitude - np.min(magnitude)) / (np.max(magnitude) - np.min(magnitude)) * 255
 
 		return normalized[1:-1, 1:-1]  # Remove one pixel from each side to avoid border effects
