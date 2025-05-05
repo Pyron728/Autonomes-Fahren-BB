@@ -29,11 +29,16 @@ def run(env, input_controller: InputController):
     target_speed_history = []
 
     while not input_controller.quit:
-        left_lane_boundaries, right_lane_boundaries = lane_detection.detect(state_image)
-        trajectory, curvature = path_planning.plan(
-            left_lane_boundaries, right_lane_boundaries
-        )
-        steering_angle = lateral_control.control(trajectory, info["speed"])
+        #left_lane_boundaries, right_lane_boundaries = lane_detection.detect(state_image)
+        #trajectory, curvature = path_planning.plan(
+        #    left_lane_boundaries, right_lane_boundaries
+        #)
+
+        way_points, curvature = path_planning.plan(
+                    info["left_lane_boundary"], info["right_lane_boundary"]
+                )     
+        #steering_angle = lateral_control.control(trajectory, info["speed"])
+        steering_angle = input_controller.steer  # manuelles Lenken
         target_speed = longitudinal_control.predict_target_speed(curvature)
         acceleration, braking = longitudinal_control.control(
             info["speed"], target_speed, steering_angle
@@ -42,14 +47,21 @@ def run(env, input_controller: InputController):
         speed_history.append(info["speed"])
         target_speed_history.append(target_speed)
 
-        cv_image = np.asarray(lane_detection.debug_image, dtype=np.uint8)
-        for point in trajectory:
+        cv_image = np.asarray(state_image, dtype=np.uint8)
+        way_points = np.array(way_points, dtype=np.int32)
+        for point in way_points:
             if 0 < point[0] < 96 and 0 < point[1] < 84:
                 cv_image[int(point[1]), int(point[0])] = [255, 255, 255]
+        for point in info["left_lane_boundary"]:
+            if 0 < point[0] < 96 and 0 < point[1] < 84:
+                cv_image[int(point[1]), int(point[0])] = [255, 0, 0]
+        for point in info["right_lane_boundary"]:
+            if 0 < point[0] < 96 and 0 < point[1] < 84:
+                cv_image[int(point[1]), int(point[0])] = [0, 0, 255]
 
         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
         cv_image = cv2.resize(cv_image, (cv_image.shape[1] * 6, cv_image.shape[0] * 6))
-        cv2.imshow("Car Racing - Pipeline", cv_image)
+        cv2.imshow("Car Racing - Path Planning", cv_image)
         cv2.waitKey(1)
 
         # Longitudinal control plot
