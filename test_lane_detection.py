@@ -6,7 +6,6 @@ import numpy as np
 from env_wrapper import CarRacingEnvWrapper
 from input_controller import InputController
 from lane_detection import LaneDetection
-import matplotlib.pyplot as plt
 
 
 def run(env, input_controller: InputController):
@@ -53,7 +52,7 @@ def main():
 
 	render_mode = "rgb_array" if args.no_display else "human"
 	env = CarRacingEnvWrapper(
-		gym.make("CarRacing-v3", render_mode=render_mode, domain_randomize=False)
+		gym.make("CarRacing-v3", render_mode=render_mode, domain_randomize=True)
 	)
 	input_controller = InputController()
 

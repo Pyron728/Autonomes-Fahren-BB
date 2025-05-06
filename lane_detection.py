@@ -12,7 +12,7 @@ class LaneDetection:
 	def detect(self, state_image):
 		self.frame_counter += 1
 		if self.frame_counter < 60:
-			return
+			return [], []
 
 		masked_img = state_image[0:84, ...]
 		binary_img = self.convert_to_binary(masked_img)
@@ -23,6 +23,9 @@ class LaneDetection:
 
 		# Extract edge points
 		edge_points = np.column_stack(np.where(filtered == 255))
+
+		# switch x and y coordinates converting to correct coordinate system
+		edge_points = np.array([(point[1], point[0]) for point in edge_points])
 
 		# Use DBSCAN for clustering
 		dbscan = DBSCAN(eps=4, min_samples=1).fit(edge_points)  # eps: how close points need to be to be considered in the same cluster
@@ -38,7 +41,7 @@ class LaneDetection:
 		# Take the two largest clusters
 		if len(sorted_clusters) < 2:
 			print("Not enough clusters found to identify left and right lanes.")
-			return
+			return [], []
 		largest_clusters = sorted_clusters[:2]
 
 		# differentiate left and right
@@ -48,7 +51,7 @@ class LaneDetection:
 		# Calculate the center of the two clusters
 		lane_1_center = np.mean(lane_1, axis=0)
 		lane_2_center = np.mean(lane_2, axis=0)
-		if lane_1_center[1] < lane_2_center[1]:
+		if lane_1_center[0] < lane_2_center[0]:
 			left_points = lane_1
 			right_points = lane_2
 		else:
@@ -56,20 +59,30 @@ class LaneDetection:
 			right_points = lane_1
 
 		# Sort points by y-coordinate (bottom to top)
-		left_points = (left_points[np.argsort(left_points[:, 0])])[::-1]
-		right_points = (right_points[np.argsort(right_points[:, 0])])[::-1]
+		left_points = (left_points[np.argsort(left_points[:, 1])])[::-1]
+		right_points = (right_points[np.argsort(right_points[:, 1])])[::-1]
 
 		left_points = left_points.astype(np.int32)
 		right_points = right_points.astype(np.int32)
 		debug_image = np.zeros((filtered.shape[0], filtered.shape[1], 3), dtype=np.uint8)
 
 		# color left and right lane points, left is blue, right is red
-		debug_image[left_points[:, 0], left_points[:, 1]] = [0, 0, 255]
-		debug_image[right_points[:, 0], right_points[:, 1]] = [255, 0, 0]
+		for point in left_points:
+			if 0 < point[0] < 96 and 0 < point[1] < 84:
+				debug_image[int(point[1]), int(point[0])] = [255, 0, 0]
+		for point in right_points:
+			if 0 < point[0] < 96 and 0 < point[1] < 84:
+				debug_image[int(point[1]), int(point[0])] = [0, 0, 255]
 
 		self.debug_image = debug_image
 
+		return left_points, right_points
+
 	def convert_to_binary(self, image):
+		# get all curb points (color 255,0,0 or 255,255,255)
+		curb_points = np.argwhere(np.all(image == [255, 0, 0], axis=-1))
+		np.append(curb_points, np.argwhere(np.all(image == [255, 255, 255], axis=-1)))
+
 		# Reshape the image into a 2D array of pixels (rows * cols, channels)
 		pixels = image.reshape(-1, image.shape[-1])
 
@@ -82,6 +95,12 @@ class LaneDetection:
 
 		# Map the two clusters to 0 and 255
 		binary_image = (binary_image * 255).astype(np.uint8)
+
+		# set all curb points to 1
+		mean = np.mean(binary_image)
+		for point in curb_points:
+			if 0 < point[0] < 96 and 0 < point[1] < 84:
+				binary_image[int(point[0]), int(point[1])] = 1 if mean < 0.5 else 0
 
 		return binary_image
 
