@@ -75,6 +75,7 @@ class LaneDetection:
 		right_points = right_points.astype(np.int32)
 
 		debug_image = np.zeros((filtered.shape[0], filtered.shape[1], 3), dtype=np.uint8)
+		debug_image = state_image[0:filtered.shape[0], 0:filtered.shape[1], :]
 		# color left and right lane points, left is blue, right is red
 		i = 0
 		for point in left_points:
@@ -198,9 +199,9 @@ class LaneDetection:
 		for i in range(0, image.shape[0] - 1):
 			for j in range(0, image.shape[1] - 1):
 				if image[i, j] != 0 and image[i + 1, j] != 0 and image[i + 1, j + 1] != 0 and image[i, j + 1]:
-					output[i, j] = image[i, j] / 4 + image[i + 1, j] / 4 + image[i + 1, j + 1] / 4 + image[i, j + 1] / 4
+					output[i+1, j+1] = image[i, j] / 4 + image[i + 1, j] / 4 + image[i + 1, j + 1] / 4 + image[i, j + 1] / 4
 				else:
-					output[i, j] = 0
+					output[i+1, j+1] = 0
 		return output
 
 	def applyTreshold(self, img, threshold):
