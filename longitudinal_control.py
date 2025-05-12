@@ -6,14 +6,14 @@ class LongitudinalControl:
     def __init__(self):
         # Speed limits
         self.max_speed = 70.0
-        self.min_speed = 20.0
+        self.min_speed = 10.0
 
         # Speed prediction weights
-        self.curvature_weight = 0.9
+        self.curvature_weight = 1.9
         self.steer_weight = 0.0
 
         # PID controller parameters
-        self.kp = 0.9
+        self.kp = 0.1
         self.ki = 0.05
         self.kd = 0.02
 
@@ -24,7 +24,7 @@ class LongitudinalControl:
         self.integral_max = 6.0  # Anti-windup limit
 
         # Acceleration/brake scaling
-        self.accel_gain = 0.5
+        self.accel_gain = 0.3
         self.brake_gain = 0.03
 
         # Steering safety filter
