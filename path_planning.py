@@ -8,8 +8,11 @@ class PathPlanning:
         self.car_position = np.array([48, 68])
         
         self.startup_mode = True
-        self.startup_counter = 45  # first "frames" for startup mode so the zoom doesnt create a weird path
-        
+        self.startup_counter = 10  # first "frames" for startup mode so the zoom doesnt create a weird path
+        self.facing_vector = np.array([0, -1])  # Default facing vector (up)
+        self.consecutive_valid_count = 0
+        self.consecutive_valid_threshold = 40
+        self.using_facing_mode = False
         # Stage selection (enable/disable different planning strategies)
 
         # Stage 0 - Startup-Mode = Just go forward in the first frames
@@ -92,7 +95,6 @@ class PathPlanning:
         # STAGE 2: Check if straight line is valid
         if self.check_straight_line and len(left_points) >= 2:
             straight_path = self.check_straight_line_validity(left_points, right_points)
-
             if straight_path is not None:
                 full_path = np.vstack([self.car_position, straight_path])
                 curvature = max(self.calculate_curvature(full_path), self.min_curvature_value)
@@ -101,7 +103,7 @@ class PathPlanning:
                 self.last_path = full_path
                 self.last_curvature = curvature
                 return full_path, curvature
-
+            
         # Stage 3: Use Vectors and move vectors inside the lane
         if self.just_use_vecotrs:  
             forward_mask = middle_points[:, 1] < self.car_position[1]
@@ -160,7 +162,6 @@ class PathPlanning:
                 middle_points = np.array(middle_points)
                 A = middle_points[i-1]
                 B = middle_points[i]
-                #print(A, 'A left, and B right form here', B)
 
                 length = np.linalg.norm(B - A)
                 #print(length)
@@ -416,60 +417,132 @@ class PathPlanning:
         
         return circle_points
     
+
+    def update_facing_vector(self, end_point):
+        """
+        Update the facing vector based on the end point.
+        
+        Args:
+        end_point (np.ndarray): The end point of the path, shape (2,)
+        """
+        # Calculate direction from car position to end point
+        direction = end_point - self.car_position
+        
+        # Normalize direction to get unit vector
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm > 0:
+            self.facing_vector = direction / direction_norm
+            print(f"Updated facing vector: {self.facing_vector}")
+    
     def check_straight_line_validity(self, left_points, right_points):
+        """
+        Check if a straight line path from the car's position is valid.
+        
+        Args:
+        left_points (np.ndarray): Points defining left lane boundary, shape (n, 2)
+        right_points (np.ndarray): Points defining right lane boundary, shape (n, 2)
+        
+        Returns:
+        np.ndarray or None: Valid path points or None if invalid
+        """
         if len(left_points) < 2 or len(right_points) < 2:
+            print("Not enough points in lane boundaries")
+            self.consecutive_valid_count = 0
+            self.using_facing_mode = False
             return None
+        
+        # Trim initial points
         left_points = left_points[20:]
         right_points = right_points[20:]    
+        
         # Get furthest visible point in middle of path
         end_point = (left_points[-1] + right_points[-1]) / 2
-        # Create straight line path from car to end point
-        t = np.linspace(0, 1, len(left_points))
-        straight_path = np.outer(1-t, self.car_position) + np.outer(t, end_point)
-        print('left points', left_points, 'right points', right_points)
+        
+        # Decide whether to use car-to-end-point path or facing vector path
+        if not self.using_facing_mode:
+            # Create straight line path from car to end point (center path)
+            t = np.linspace(0, 1, len(left_points))
+            straight_path = np.outer(1-t, self.car_position) + np.outer(t, end_point)
+            print(f"Using center path mode. Consecutive valid: {self.consecutive_valid_count}")
+        else:
+            # Use facing vector to determine path
+            # Calculate the maximum distance we can see
+            max_distance = np.linalg.norm(end_point - self.car_position)
+            t = np.linspace(0, max_distance, len(left_points))
+            straight_path = np.array([self.car_position + i * self.facing_vector for i in t])
+            print(f"Using facing vector mode: {self.facing_vector}")
+        
+        # Check if path is valid (all points inside lane)
+        all_valid = True
         for i in range(len(straight_path)):
             # Create line segments between lane boundary points
             if i < len(left_points) - 1 and i < len(right_points) - 1:
                 left_segment = np.array([left_points[i], left_points[i+1]])
                 right_segment = np.array([right_points[i], right_points[i+1]])
-                
+               
                 # Check if path point is inside the lane segment
                 point = straight_path[i]
                 in_lane = self.is_point_inside_lane(point, left_segment, right_segment)
-                
+               
                 if not in_lane:
-                    print('JETZT', point, i, left_segment, right_segment)
-                    return None 
+                    print(f"Point {i} is outside lane")
+                    all_valid = False
+                    break
         
-        return straight_path[1:]
-    
-    def is_point_inside_lane(self, point, left_points, right_points):
-        direction =  np.array([0, -1])
-        car_pos = self.car_position
-        last_point= left_points[-1] + right_points[-1] / 2
-        path_vector = last_point - car_pos
-        path_length = np.linalg.norm(path_vector)
-        direction = path_vector 
-        direction[1] = direction[1] * -1
-        print(direction, 'dir')
-        for left, right in zip(left_points, right_points):
-            # Vector from car to segment start
-            v1 = left - car_pos
-            v2 = right - car_pos
+        # Update tracking based on validity
+        if all_valid:
+            if not self.using_facing_mode:
+                self.consecutive_valid_count += 1
+                if self.consecutive_valid_count >= self.consecutive_valid_threshold:
+                    # Switch to facing mode and update facing vector
+                    self.using_facing_mode = True
+                    self.update_facing_vector(end_point)
+                    print("Switching to facing mode")
             
-            # Cross products to check if direction lies between left and right
-            cross1 = np.cross(direction, v1)
-            cross2 = np.cross(direction, v2)
+            return straight_path[1:]  # Return valid path points
+        else:
+            # Reset on invalid path
+            self.consecutive_valid_count = 0
+            self.using_facing_mode = False
+            return None
+            
+    def is_point_inside_lane(self, point, left_segment, right_segment):
+        """
+        Check if a point is inside the lane using a precise coordinate system check.
+        
+        Args:
+        point (np.ndarray): The point to check, shape (2,)
+        left_segment (np.ndarray): Left lane segment, shape (2, 2)
+        right_segment (np.ndarray): Right lane segment, shape (2, 2)
+        
+        Returns:
+        bool: True if point is inside the lane, False otherwise
+        """
+        # Extract coordinates
+        point_x, point_y = point
+        left_x1, left_y1 = left_segment[0]
+        left_x2, left_y2 = left_segment[1]
+        right_x1, right_y1 = right_segment[0]
+        right_x2, right_y2 = right_segment[1]
+        
+        # Debugging print
+        print('JETZT', point_x, point_y, point, left_segment, right_segment)
+        
+        # Looking at the debug output, the correct check is:
+        # The point x should be greater than the leftmost x boundary
+        # The point x should be less than the rightmost x boundary
+        # The lane seems to run left-to-right
+        
+        # Get the maximum x of the left segment (rightmost point of left boundary)
+        max_left_x = max(left_x1, left_x2)
+        
+        # Get the minimum x of the right segment (leftmost point of right boundary)
+        min_right_x = min(right_x1, right_x2)
+        
+        # Check if the point is between the left and right lane boundaries
+        # Point should be to the right of left boundary and to the left of right boundary
+        return max_left_x <= point_x <= min_right_x
 
-            # If cross1 and cross2 have opposite signs or one is zero, ray passes between
-            if cross1 * cross2 <= 0:
-                # Additional check: is the projection in front of the car?
-                midpoint = (left + right) / 2
-                to_mid = midpoint - car_pos
-                if np.dot(direction, to_mid) > 0:
-                    return True  # the path intersects the lane
-        return False  # no intersection found
-    
     def calculate_curvature(self, trajectory):
         """
         Calculate approximate curvature of the path.
