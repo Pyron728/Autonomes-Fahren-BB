@@ -14,9 +14,10 @@ class PathPlanning:
 
         # Stage 0 - Startup-Mode = Just go forward in the first frames
         # Stage 0.5 - Emergency-Path - If we go off lane, go bback to one lane or search for new lane
-        self.just_use_middle_path = False # Stage 1 - Use the middle curve
+        self.just_use_middle_path = True # Stage 1 - Use the middle curve
         self.check_straight_line = True  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
         self.just_use_vecotrs = True # Stage 3 - Move the vecotrs in curves to the inner lane
+
         self.other_splines = False # Stage 4 - Spline creation with the Apex-point to maximise the radius
 
         self.number_of_points = 20 # How many points should get returend, the more points the lower the curvature 
@@ -80,24 +81,22 @@ class PathPlanning:
         right_points = right[:min_lane_boundary]
 
         middle_points = (left_points + right_points) / 2
-
+        forward_mask = middle_points[:, 1] < self.car_position[1]
+        middle_points = middle_points[forward_mask]
         # Stage 1: Only use Middle Points in front of the car
         if(self.just_use_middle_path):
-            forward_mask = middle_points[:, 1] < self.car_position[1]
-            middle_points = middle_points[forward_mask]
             curvature = self.calculate_curvature(middle_points)
-            return new_path, curvature
+            return middle_points, curvature
         
         
         # STAGE 2: Check if straight line is valid
         if self.check_straight_line and len(left_points) >= 2:
             straight_path = self.check_straight_line_validity(left_points, right_points)
+
             if straight_path is not None:
                 full_path = np.vstack([self.car_position, straight_path])
                 curvature = max(self.calculate_curvature(full_path), self.min_curvature_value)
-                if self.last_path is not None and len(self.last_path) == len(full_path):
-                    full_path = self.last_path * self.path_smoothing_factor + full_path * (1 - self.path_smoothing_factor)
-                    curvature = self.last_curvature * self.path_smoothing_factor + curvature * (1 - self.path_smoothing_factor)
+              
                 
                 self.last_path = full_path
                 self.last_curvature = curvature
@@ -112,12 +111,23 @@ class PathPlanning:
             new_path = np.array(middle_points)
 
             # Make it to a spline back agin to limit the points to num points to better calculate stuff
-            x_middle, y_middle = new_path[:, 0], new_path[:, 1]  
-            middle_tck, u = splprep([x_middle, y_middle], s=0)
+            x_middle, y_middle = new_path[:, 0], new_path[:, 1]
+
+            if len(x_middle) < 4:
+                raise ValueError("Nicht genug Punkte für splprep.")
+
+            if np.any(np.isnan(x_middle)) or np.any(np.isnan(y_middle)):
+                raise ValueError("NaN in den Punkten!")
+
+            if np.allclose(x_middle, x_middle[0]) and np.allclose(y_middle, y_middle[0]):
+                raise ValueError("Alle Punkte sind gleich – kein gültiger Pfad.")
+            
+            x_middle, y_middle, t = self.fix_path_data(x_middle, y_middle)
+
+            middle_tck, u = splprep([x_middle, y_middle], u=t, s=1e-3)
             u_middle = np.linspace(0, 1, num=18)
             x_new, y_new = splev(u_middle, middle_tck)
             middle_points = np.column_stack((x_new, y_new))
-            
             dx_dt = np.gradient(middle_points[:, 0])
             dy_dt = np.gradient(middle_points[:, 1])
             velocity = np.array([ [dx_dt[i], dy_dt[i]] for i in range(dx_dt.size)])
@@ -141,19 +151,26 @@ class PathPlanning:
 
             acceleration = t_component * tangent + n_component * normal 
             for i in range(len(middle_points)-1):
-                if abs(t_component[i]) > 1e-12:
+                if abs(t_component[i]) > 1e-10:
                     middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2
 
+
+            counter = 0
+            for i in range(3,len(middle_points)-1 - counter):
+                middle_points = np.array(middle_points)
+                A = middle_points[i-1]
+                B = middle_points[i]
+                #print(A, 'A left, and B right form here', B)
+
+                length = np.linalg.norm(B - A)
+                #print(length)
+                if length > 8:
+                    np.delete(middle_points, i)
+                    counter += 1
             # Convert final path to number of points in the parameters
             new_path = middle_points
-            x_middle, y_middle = new_path[:, 0], new_path[:, 1]  
-            middle_tck, u = splprep([x_middle, y_middle], s=0)
-            u_middle = np.linspace(0, 1, self.number_of_points)
-            x_new, y_new = splev(u_middle, middle_tck)
-            middle_points = np.column_stack((x_new, y_new))
 
             curvature = self.calculate_curvature(middle_points)
-            print(curvature)
             return middle_points, curvature
 
         # Stage 4:  Use a Spline to the apex to maximise the radius
@@ -349,6 +366,45 @@ class PathPlanning:
         self.last_curvature = curvature
         return final_path, curvature
     
+    def fix_path_data(self, x_middle, y_middle):
+        """
+        Fix common issues in path data that might cause splprep to fail:
+        1. Remove duplicate points
+        2. Fix non-monotonic sections
+        """
+        # Convert to numpy arrays if not already
+        x = np.array(x_middle)
+        y = np.array(y_middle)
+        
+        # Create a mask for unique points (remove duplicates)
+        unique_mask = np.ones(len(x), dtype=bool)
+        
+        for i in range(len(x)-1):
+            # Check if current point is identical to next point
+            if np.isclose(x[i], x[i+1]) and np.isclose(y[i], y[i+1]):
+                unique_mask[i+1] = False
+        
+        # Apply the mask to keep only unique points
+        x_unique = x[unique_mask]
+        y_unique = y[unique_mask]
+        
+        # Print info about removed duplicates
+        num_removed = len(x) - len(x_unique)
+        if num_removed > 0:
+            print(f"Removed {num_removed} duplicate points")
+        
+        # Option 1: Sort by arc length (not suitable for all paths)
+        # This works for simple paths but may fail for complex shapes
+        
+        # Option 2: Calculate a custom parameterization
+        # This is a more robust approach
+        t = np.zeros(len(x_unique))
+        t[1:] = np.sqrt(np.diff(x_unique)**2 + np.diff(y_unique)**2)
+        t = np.cumsum(t)
+        t /= t[-1]  # normalize to [0, 1]
+        
+        return x_unique, y_unique, t
+
     def create_highlight_circle(self, center_point, radius=5, num_points=12):
         #Creates a circle of points around a specified center point for visualization purposes.
         angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
@@ -363,17 +419,14 @@ class PathPlanning:
     def check_straight_line_validity(self, left_points, right_points):
         if len(left_points) < 2 or len(right_points) < 2:
             return None
-            
+        left_points = left_points[20:]
+        right_points = right_points[20:]    
         # Get furthest visible point in middle of path
         end_point = (left_points[-1] + right_points[-1]) / 2
-        
         # Create straight line path from car to end point
         t = np.linspace(0, 1, len(left_points))
         straight_path = np.outer(1-t, self.car_position) + np.outer(t, end_point)
-        # cut the first 20 points to not use rest curve segments on the screen
-        left_points = left_points[20:]
-        right_points = right_points[20:]
-        
+        print('left points', left_points, 'right points', right_points)
         for i in range(len(straight_path)):
             # Create line segments between lane boundary points
             if i < len(left_points) - 1 and i < len(right_points) - 1:
@@ -385,68 +438,37 @@ class PathPlanning:
                 in_lane = self.is_point_inside_lane(point, left_segment, right_segment)
                 
                 if not in_lane:
+                    print('JETZT', point, i, left_segment, right_segment)
                     return None 
         
         return straight_path[1:]
     
-    def is_point_inside_lane(self, point, left_segment, right_segment):
-        # Check left boundary (point should be on right side)
-        left_vec = left_segment[1] - left_segment[0]
-        left_to_point = point - left_segment[0]
-        left_cross = np.cross(left_vec, left_to_point)
-        
-        # Check right boundary (point should be on left side)
-        right_vec = right_segment[1] - right_segment[0]
-        right_to_point = point - right_segment[0]
-        right_cross = np.cross(right_vec, right_to_point)
-        
-        # Point is inside lane if it's on the right of left boundary and left of right boundary
-        return left_cross > 0 and right_cross < 0
-    
-    def calculate_middle_path(self, left_points, right_points):
-        """
-        Stage 2: Calculate the middle path between lane boundaries
-        """
-        # Calculate middle points
-        middle_points = (left_points + right_points) / 2
-        return middle_points
-    
-    def calculate_local_curvatures(self, path):
-        """Calculate curvature at each point in the path"""
-        if len(path) < 3:
-            return np.zeros(len(path))
+    def is_point_inside_lane(self, point, left_points, right_points):
+        direction =  np.array([0, -1])
+        car_pos = self.car_position
+        last_point= left_points[-1] + right_points[-1] / 2
+        path_vector = last_point - car_pos
+        path_length = np.linalg.norm(path_vector)
+        direction = path_vector 
+        direction[1] = direction[1] * -1
+        print(direction, 'dir')
+        for left, right in zip(left_points, right_points):
+            # Vector from car to segment start
+            v1 = left - car_pos
+            v2 = right - car_pos
             
-        curvatures = np.zeros(len(path))
-        
-        for i in range(1, len(path) - 1):
-            p1 = path[i - 1]
-            p2 = path[i]
-            p3 = path[i + 1]
-            
-            # Calculate vectors
-            v1 = p2 - p1
-            v2 = p3 - p2
-            
-            # Vector lengths
-            len_v1 = np.linalg.norm(v1)
-            len_v2 = np.linalg.norm(v2)
-            
-            if len_v1 < 1e-6 or len_v2 < 1e-6:
-                curvatures[i] = 0
-                continue
-            
-            # Normalize vectors
-            v1_norm = v1 / len_v1
-            v2_norm = v2 / len_v2
-            
-            # Angle between vectors
-            dot_product = np.clip(np.dot(v1_norm, v2_norm), -1.0, 1.0)
-            angle = np.arccos(dot_product)
-            
-            # Curvature is approximately angle/distance
-            curvatures[i] = np.abs(angle) / ((len_v1 + len_v2) / 2)
-            
-        return curvatures
+            # Cross products to check if direction lies between left and right
+            cross1 = np.cross(direction, v1)
+            cross2 = np.cross(direction, v2)
+
+            # If cross1 and cross2 have opposite signs or one is zero, ray passes between
+            if cross1 * cross2 <= 0:
+                # Additional check: is the projection in front of the car?
+                midpoint = (left + right) / 2
+                to_mid = midpoint - car_pos
+                if np.dot(direction, to_mid) > 0:
+                    return True  # the path intersects the lane
+        return False  # no intersection found
     
     def calculate_curvature(self, trajectory):
         """
