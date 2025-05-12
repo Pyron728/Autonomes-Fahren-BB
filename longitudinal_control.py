@@ -5,8 +5,8 @@ from collections import deque
 class LongitudinalControl:
     def __init__(self):
         # Speed limits
-        self.max_speed = 70.0
-        self.min_speed = 10.0
+        self.max_speed = 80.0
+        self.min_speed = 20.0
 
         # Speed prediction weights
         self.curvature_weight = 1.9
@@ -15,7 +15,7 @@ class LongitudinalControl:
         # PID controller parameters
         self.kp = 0.1
         self.ki = 0.05
-        self.kd = 0.02
+        self.kd = 0.03
 
         # PID internal state
         self.prev_error = 0.0
@@ -25,10 +25,10 @@ class LongitudinalControl:
 
         # Acceleration/brake scaling
         self.accel_gain = 0.3
-        self.brake_gain = 0.03
+        self.brake_gain = 0.08
 
         # Steering safety filter
-        self.steer_safety_threshold = 0.6
+        self.steer_safety_threshold = 0.65
         self.steer_history = deque(maxlen=5)
 
     def predict_target_speed(self, trajectory,a = None,b = None):
