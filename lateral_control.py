@@ -15,7 +15,7 @@ class LateralControl:
 
 
     def control(self, trajectory, speed):
-        if len(trajectory) < 1:
+        if len(trajectory) < 5:
             return 0.0
 
         # Get closest point on trajectory in front of car

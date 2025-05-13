@@ -29,7 +29,7 @@ class LongitudinalControl:
         # Steering safety filter
         self.steer_safety_threshold = 0.9
         self.steer_history = deque(maxlen=5)
-        self.curvature_history = deque(maxlen=20)
+        self.curvature_history = deque(maxlen=25)
 
 
     def predict_target_speed(self, trajectory):
@@ -94,6 +94,6 @@ class LongitudinalControl:
             gas = 0.0
 
         if steer > 0.5:
-            gas *= 0.5
+            gas *= 0.7
 
         return gas, brake
