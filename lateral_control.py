@@ -4,16 +4,20 @@ import numpy as np
 class LateralControl:
 
     def __init__(self):
-        self._car_position = np.array([48, 64])
+        self._car_position = np.array([48, 62])
 
         # parameter for stanley controller
         # gain for correcting crosstrack error
-        self.k_e = 3
+        self.k_e = .4
         # damping for high speed
-        self.k_s = 0.1
+        self.k_s = 1
+        self.steering_gain = 1
 
 
     def control(self, trajectory, speed):
+        if len(trajectory) < 1:
+            return 0.0
+
         # Get closest point on trajectory in front of car
         closest_index = np.argmin(np.linalg.norm(trajectory - self._car_position, axis=1))
         closest_traj_point = trajectory[closest_index]
@@ -41,5 +45,5 @@ class LateralControl:
         steering_angle = angle + np.arctan2(self.k_e * error_front_axle, speed + self.k_s)
 
         self.closest_traj_point = closest_traj_point
-        return steering_angle
+        return steering_angle * self.steering_gain
 

@@ -38,7 +38,7 @@ def run(env, input_controller: InputController):
                     left_points, right_points             
                 )     
         steering_angle = lateral_control.control(way_points, info["speed"])
-        target_speed = longitudinal_control.predict_target_speed(curvature)
+        target_speed = longitudinal_control.predict_target_speed(way_points, 20)
         acceleration, braking = longitudinal_control.control(
             info["speed"], target_speed, steering_angle
         )
@@ -51,10 +51,10 @@ def run(env, input_controller: InputController):
         for point in way_points:
             if 0 < point[0] < 96 and 0 < point[1] < 84:
                 cv_image[int(point[1]), int(point[0])] = [255, 255, 255]
-        for point in info["left_lane_boundary"]:
+        for point in left_points:
             if 0 < point[0] < 96 and 0 < point[1] < 84:
                 cv_image[int(point[1]), int(point[0])] = [255, 0, 0]
-        for point in info["right_lane_boundary"]:
+        for point in right_points:
             if 0 < point[0] < 96 and 0 < point[1] < 84:
                 cv_image[int(point[1]), int(point[0])] = [0, 0, 255]
 
@@ -98,7 +98,7 @@ def main():
 
     render_mode = "rgb_array" if args.no_display else "human"
     env = CarRacingEnvWrapper(
-        gym.make("CarRacing-v3", render_mode=render_mode, domain_randomize=True)
+        gym.make("CarRacing-v3", render_mode=render_mode, domain_randomize=False)
     )
     input_controller = InputController()
 

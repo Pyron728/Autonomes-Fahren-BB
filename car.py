@@ -34,7 +34,7 @@ class Car:
             left_lane_boundaries, right_lane_boundaries
         )
         steering_angle = self._lateral_control.control(trajectory, info["speed"])
-        target_speed = self._longitudinal_control.predict_target_speed(curvature)
+        target_speed = self._longitudinal_control.predict_target_speed(trajectory)
         acceleration, braking = self._longitudinal_control.control(
             info["speed"], target_speed, steering_angle
         )

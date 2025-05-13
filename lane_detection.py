@@ -7,12 +7,14 @@ class LaneDetection:
 	def __init__(self):
 		self.frame_counter = 0
 		self.debug_image = np.zeros((10, 10, 3), dtype=np.uint8)
+		self.last_left_points = []
+		self.last_right_points = []
 		pass
 
 	def detect(self, state_image):
 		self.frame_counter += 1
 		if self.frame_counter < 60:
-			return [], []
+			return self.last_left_points, self.last_right_points
 
 		masked_img = state_image[0:84, ...]
 		binary_img = self.convert_to_binary(masked_img)
@@ -26,6 +28,9 @@ class LaneDetection:
 
 		# switch x and y coordinates converting to correct coordinate system
 		edge_points = np.array([(point[1], point[0]) for point in edge_points])
+
+		if len(edge_points) < 0 or edge_points.shape[0] == 0:
+			return self.last_left_points, self.last_right_points
 
 		# Use DBSCAN for clustering
 		dbscan = DBSCAN(eps=4, min_samples=1).fit(edge_points)  # eps: how close points need to be to be considered in the same cluster
