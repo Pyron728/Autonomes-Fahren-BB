@@ -17,8 +17,8 @@ class PathPlanning:
 
         # Stage 0 - Startup-Mode = Just go forward in the first frames
         # Stage 0.5 - Emergency-Path - If we go off lane, go bback to one lane or search for new lane
-        self.just_use_middle_path = True # Stage 1 - Use the middle curve
-        self.check_straight_line = True  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
+        self.just_use_middle_path = False # Stage 1 - Use the middle curve
+        self.check_straight_line = False  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
         self.just_use_vecotrs = True # Stage 3 - Move the vecotrs in curves to the inner lane
 
         self.other_splines = False # Stage 4 - Spline creation with the Apex-point to maximise the radius
@@ -84,8 +84,6 @@ class PathPlanning:
         right_points = right[:min_lane_boundary]
 
         middle_points = (left_points + right_points) / 2
-        forward_mask = middle_points[:, 1] < self.car_position[1]
-        middle_points = middle_points[forward_mask]
         # Stage 1: Only use Middle Points in front of the car
         if(self.just_use_middle_path):
             curvature = self.calculate_curvature(middle_points)
@@ -112,6 +110,7 @@ class PathPlanning:
 
             new_path = np.array(middle_points)
 
+
             # Make it to a spline back agin to limit the points to num points to better calculate stuff
             x_middle, y_middle = new_path[:, 0], new_path[:, 1]
 
@@ -126,10 +125,38 @@ class PathPlanning:
             
             x_middle, y_middle, t = self.fix_path_data(x_middle, y_middle)
 
-            middle_tck, u = splprep([x_middle, y_middle], u=t, s=1e-3)
+            middle_tck, u = splprep([x_middle, y_middle], u=t, s=2)
             u_middle = np.linspace(0, 1, num=18)
             x_new, y_new = splev(u_middle, middle_tck)
             middle_points = np.column_stack((x_new, y_new))
+
+
+
+            if len(middle_points) >= 3:
+                # Calculate overall direction of the path (first to last point)
+                main_direction = middle_points[-1] - middle_points[0]
+                main_direction = main_direction / np.linalg.norm(main_direction)
+                
+                # Check if path is mostly straight by comparing each segment to main direction
+                is_straight_path = True
+                deviation_threshold = 0.145  # Adjust based on testing
+                
+                for i in range(len(middle_points)-1):
+                    segment = middle_points[i+1] - middle_points[i]
+                    if np.linalg.norm(segment) > 0:  # Avoid zero-length segments
+                        segment = segment / np.linalg.norm(segment)
+                        # Dot product close to 1 means segments are aligned with main direction
+                        alignment = np.abs(np.dot(segment, main_direction))
+                        if alignment < (1 - deviation_threshold):
+                            is_straight_path = False
+                            break
+                
+                if is_straight_path:
+                    # If the path is straight, don't modify points based on curvature
+                    curvature = np.zeros(len(middle_points))
+                    return middle_points, curvature
+
+
             dx_dt = np.gradient(middle_points[:, 0])
             dy_dt = np.gradient(middle_points[:, 1])
             velocity = np.array([ [dx_dt[i], dy_dt[i]] for i in range(dx_dt.size)])
@@ -143,18 +170,24 @@ class PathPlanning:
             dT_dt = np.array([ [deriv_tangent_x[i], deriv_tangent_y[i]] for i in range(deriv_tangent_x.size)])
             length_dT_dt = np.sqrt(deriv_tangent_x * deriv_tangent_x + deriv_tangent_y * deriv_tangent_y)
             normal = np.array([1/length_dT_dt]).transpose() * dT_dt
-            d2s_dt2 = np.gradient(ds_dt)
-            d2x_dt2 = np.gradient(dx_dt)
-            d2y_dt2 = np.gradient(dy_dt)
 
-            curvature = np.abs(d2x_dt2 * dy_dt - dx_dt * d2y_dt2) / (dx_dt * dx_dt + dy_dt * dy_dt)**1.5
-            t_component = np.array([d2s_dt2]).transpose()
-            n_component = np.array([curvature * ds_dt * ds_dt]).transpose()
-
-            acceleration = t_component * tangent + n_component * normal 
-            for i in range(len(middle_points)-1):
-                if abs(t_component[i]) > 1e-10:
-                    middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2
+            
+            # Alternative simpler condition
+            for i in range(1, len(middle_points)-1):
+                # Calculate angle between vectors from this point to neighbors
+                v1 = middle_points[i-1] - middle_points[i]
+                v2 = middle_points[i+1] - middle_points[i]
+                
+                # Normalize vectors
+                v1 = v1 / np.linalg.norm(v1)
+                v2 = v2 / np.linalg.norm(v2)
+                
+                # Calculate angle between vectors
+                angle = np.arccos(np.clip(np.dot(v1, v2), -1.0, 1.0))
+                
+                # Only adjust points at significant angles
+                if angle > 0.01:  # About 5.7 degrees
+                    middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2.5
 
 
             counter = 0
@@ -165,7 +198,7 @@ class PathPlanning:
 
                 length = np.linalg.norm(B - A)
                 #print(length)
-                if length > 8:
+                if length > 4:
                     np.delete(middle_points, i)
                     counter += 1
             # Convert final path to number of points in the parameters
@@ -405,6 +438,33 @@ class PathPlanning:
         t /= t[-1]  # normalize to [0, 1]
         
         return x_unique, y_unique, t
+
+    def calculate_true_path_curvature(self, points):
+        """Calculate curvature based on relative changes in direction, not absolute coordinates"""
+        if len(points) < 3:
+            return np.zeros(len(points))
+        
+        # Calculate vectors between consecutive points
+        vectors = points[1:] - points[:-1]
+        
+        # Normalize the vectors
+        magnitudes = np.sqrt(np.sum(vectors**2, axis=1))
+        unit_vectors = vectors / magnitudes[:, np.newaxis]
+        
+        # Calculate the angle changes between consecutive vectors (dot product)
+        curvatures = np.zeros(len(points))
+        for i in range(len(unit_vectors)-1):
+            dot_product = np.clip(np.dot(unit_vectors[i], unit_vectors[i+1]), -1.0, 1.0)
+            angle_change = np.arccos(dot_product)
+            
+            # Assign curvature to the middle point of the three points used
+            curvatures[i+1] = angle_change
+        
+        # Scale by distance to get proper curvature units
+        avg_segment_length = np.mean(magnitudes)
+        curvatures = curvatures / avg_segment_length
+        
+        return curvatures
 
     def create_highlight_circle(self, center_point, radius=5, num_points=12):
         #Creates a circle of points around a specified center point for visualization purposes.
