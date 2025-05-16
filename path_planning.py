@@ -17,14 +17,15 @@ class PathPlanning:
 
         # Stage 0 - Startup-Mode = Just go forward in the first frames
         # Stage 0.5 - Emergency-Path - If we go off lane, go bback to one lane or search for new lane
-        self.just_use_middle_path = False # Stage 1 - Use the middle curve
-        self.check_straight_line = False  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
-        self.just_use_vecotrs = True # Stage 3 - Move the vecotrs in curves to the inner lane
+        self.just_use_middle_path = True # Stage 1 - Use the middle curve
+        self.check_straight_line = True  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
+        self.just_use_vecotrs = False # Stage 3 - Move the vecotrs in curves to the inner lane
 
-        self.other_splines = False # Stage 4 - Spline creation with the Apex-point to maximise the radius
+        self.other_splines = True # Stage 4 - Spline creation with the Apex-point to maximise the radius
 
-        self.number_of_points = 20 # How many points should get returend, the more points the lower the curvature 
+        self.number_of_points = 50
 
+        self.desired_distance = 6.5
         # Stage 3 Parameters/Storage Variables
         self.apex_history = [] # 
         self.max_history_length = 5  # Reduced from 10 for faster response
@@ -62,6 +63,8 @@ class PathPlanning:
                 
                 self.last_path = straight_path
                 self.last_curvature = self.min_curvature_value
+
+                straight_path = self.resample_path_uniform_distance(straight_path)               
                 return straight_path, self.min_curvature_value
             else:
                 self.startup_mode = False
@@ -71,6 +74,8 @@ class PathPlanning:
             emergency_path = self.create_emergency_path(left_lane_boundary, right_lane_boundary)
             self.last_path = emergency_path
             self.last_curvature = self.min_curvature_value
+
+            emergency_path = self.resample_path_uniform_distance(emergency_path)
             return emergency_path, self.min_curvature_value
 
         
@@ -84,9 +89,15 @@ class PathPlanning:
         right_points = right[:min_lane_boundary]
 
         middle_points = (left_points + right_points) / 2
+        forward_mask = middle_points[:, 1] < self.car_position[1]
+        middle_points = middle_points[forward_mask]
         # Stage 1: Only use Middle Points in front of the car
         if(self.just_use_middle_path):
             curvature = self.calculate_curvature(middle_points)
+            x_middle, y_middle, t = self.fix_path_data(middle_points[:, 0], middle_points[:, 1])
+            middle_points = np.column_stack((x_middle, y_middle))
+
+            middle_points = self.resample_path_uniform_distance(middle_points)
             return middle_points, curvature
         
         
@@ -100,19 +111,18 @@ class PathPlanning:
                 
                 self.last_path = full_path
                 self.last_curvature = curvature
+                full_path = self.resample_path_uniform_distance(full_path)
                 return full_path, curvature
             
         # Stage 3: Use Vectors and move vectors inside the lane
         if self.just_use_vecotrs:  
-            forward_mask = middle_points[:, 1] < self.car_position[1]
-            middle_points = middle_points[forward_mask]
             curvature = self.calculate_curvature(middle_points)
 
-            new_path = np.array(middle_points)
+            middle_points = np.array(middle_points)
 
 
             # Make it to a spline back agin to limit the points to num points to better calculate stuff
-            x_middle, y_middle = new_path[:, 0], new_path[:, 1]
+            x_middle, y_middle = middle_points[:, 0], middle_points[:, 1]
 
             if len(x_middle) < 4:
                 raise ValueError("Nicht genug Punkte für splprep.")
@@ -153,7 +163,8 @@ class PathPlanning:
                 
                 if is_straight_path:
                     # If the path is straight, don't modify points based on curvature
-                    curvature = np.zeros(len(middle_points))
+                    curvature = self.calculate_curvature(middle_points)
+                    middle_points = self.resample_path_uniform_distance(middle_points)
                     return middle_points, curvature
 
 
@@ -190,19 +201,19 @@ class PathPlanning:
                     middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2.5
 
 
-            counter = 0
-            for i in range(3,len(middle_points)-1 - counter):
+            removedPoints = 0
+            for i in range(3,len(middle_points)-1 - removedPoints):
                 middle_points = np.array(middle_points)
                 A = middle_points[i-1]
                 B = middle_points[i]
 
                 length = np.linalg.norm(B - A)
                 #print(length)
-                if length > 4:
+                if length > 1.5:
                     np.delete(middle_points, i)
-                    counter += 1
-            # Convert final path to number of points in the parameters
-            new_path = middle_points
+                    removedPoints += 1
+
+            middle_points = self.resample_path_uniform_distance(middle_points)
 
             curvature = self.calculate_curvature(middle_points)
             return middle_points, curvature
@@ -317,7 +328,7 @@ class PathPlanning:
                                            future_max_idx * self.future_weight)
                     
             # Skip apex calculation if curvature is too low (we're in a straight section)
-            if abs_curvatures[max_curvature_idx] < self.curvature_threshold * 10:
+            if abs_curvatures[max_curvature_idx] < self.curvature_threshold * 30:
                 final_path = np.vstack([self.car_position, middle_points])
                 curvature = max(self.calculate_curvature(final_path), self.min_curvature_value)               
                 if self.last_path is not None and len(self.last_path) == len(final_path):
@@ -388,18 +399,45 @@ class PathPlanning:
                 spline_path[i, 0] = spline_x(t_val)
                 spline_path[i, 1] = spline_y(t_val)
             curvature = self.calculate_curvature(spline_path) 
-            key_points_markers = np.vstack([
-                self.create_highlight_circle(start_point, radius=2, num_points=8),
-                self.create_highlight_circle(apex_point, radius=3, num_points=10),
-                self.create_highlight_circle(end_point, radius=2, num_points=8),
-            ])
-            full_path = np.vstack([spline_path, key_points_markers])
-        final_path = full_path
+
+        final_path = self.resample_path_uniform_distance(full_path)
 
         self.last_path = final_path
         self.last_curvature = curvature
         return final_path, curvature
     
+    def resample_path_uniform_distance(self, points):
+        """
+        Resamples a path so that points are spaced at a uniform distance.
+        
+        Args:
+            points: numpy array of shape (n, 2) containing x,y coordinates
+            desired_distance: the desired distance between consecutive points
+            
+        Returns:
+            numpy array of shape (m, 2) with uniformly spaced points
+        """
+
+        desired_distance = self.desired_distance
+        # Calculate the cumulative distance along the path
+        diffs = np.diff(points, axis=0)
+        segment_lengths = np.sqrt(np.sum(diffs**2, axis=1))
+        cumulative_lengths = np.concatenate(([0], np.cumsum(segment_lengths)))
+        total_length = cumulative_lengths[-1]
+        
+        # Calculate how many points we need
+        num_points = max(int(total_length / desired_distance) + 1, 4)
+        
+        # Create a spline of the path
+        # Use the cumulative lengths as the parameter to ensure accuracy along curves
+        tck, u = splprep([points[:, 0], points[:, 1]], u=cumulative_lengths/total_length, s=0)
+        
+        # Sample the spline at uniform distances
+        uniform_u = np.linspace(0, 1, num_points)
+        uniform_points = np.column_stack(splev(uniform_u, tck))
+        
+        return uniform_points
+
     def fix_path_data(self, x_middle, y_middle):
         """
         Fix common issues in path data that might cause splprep to fail:
