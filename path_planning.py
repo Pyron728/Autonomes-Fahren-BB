@@ -139,7 +139,7 @@ class PathPlanning:
                 
                 x_middle, y_middle, t = self.fix_path_data(x_middle, y_middle)
 
-                middle_tck, u = splprep([x_middle, y_middle], u=t, s=2)
+                middle_tck, u = splprep([x_middle, y_middle], u=t, s=3.41)
                 u_middle = np.linspace(0, 1, num=18)
                 x_new, y_new = splev(u_middle, middle_tck)
                 middle_points = np.column_stack((x_new, y_new))
@@ -213,7 +213,7 @@ class PathPlanning:
 
                     length = np.linalg.norm(B - A)
                     #print(length)
-                    if length > 1.5:
+                    if length > 1:
                         np.delete(middle_points, i)
                         removedPoints += 1
 
