@@ -24,8 +24,9 @@ class PathPlanning:
 
         self.desired_distance = 6.5
 
-        #Last known path and curvature for smoothing transitions
+        #Last known path and curvature 
         self.last_path = None
+        self.min_curvature_value = 0.05
         self.last_curvature = self.min_curvature_value
 
     def plan(self, left_lane_boundary, right_lane_boundary):
@@ -192,6 +193,7 @@ class PathPlanning:
                     if angle > 0.01:  # About 5.7 degrees
                         middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2.5
 
+                middle_points = self.detect_and_fix_zigzag(middle_points, angle_threshold=0.5)
 
                 removedPoints = 0
                 for i in range(3,len(middle_points)-1 - removedPoints):
@@ -222,6 +224,47 @@ class PathPlanning:
         self.last_curvature = curvature
         return final_path, curvature
     
+    def detect_and_fix_zigzag(self, path, angle_threshold):
+        """
+        Detect zigzag patterns in the path and smooth them out.
+        
+        Args:
+            path: numpy array of shape (n, 2) containing x,y coordinates
+            angle_threshold: threshold angle (in radians) to detect zigzags
+        
+        Returns:
+            Corrected path as numpy array
+        """
+        if len(path) < 3:
+            return path
+        
+        corrected_path = np.copy(path)
+        
+        # Look for zigzag patterns
+        for i in range(1, len(path) - 1):
+            # Calculate vectors to previous and next points
+            v1 = path[i] - path[i-1]
+            v2 = path[i+1] - path[i]
+            
+            # Normalize vectors
+            v1_norm = np.linalg.norm(v1)
+            v2_norm = np.linalg.norm(v2)
+            
+            if v1_norm > 1e-6 and v2_norm > 1e-6:
+                v1 = v1 / v1_norm
+                v2 = v2 / v2_norm
+                
+                # Calculate angle between vectors
+                dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
+                angle = np.arccos(dot_product)
+                
+                # If angle is greater than threshold, we have a zigzag
+                if angle > angle_threshold:
+                    # Replace the point with the average of its neighbors
+                    corrected_path[i] = (path[i-1] + path[i+1]) / 2
+        
+        return corrected_path
+
     def resample_path_uniform_distance(self, points):
         """
         Resamples a path so that points are spaced at a uniform distance.
