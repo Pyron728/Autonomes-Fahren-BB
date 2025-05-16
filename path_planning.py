@@ -12,7 +12,6 @@ class PathPlanning:
         self.facing_vector = np.array([0, -1])  # Default facing vector (up)
         self.consecutive_valid_count = 0
         self.consecutive_valid_threshold = 40
-        self.using_facing_mode = False
         # Stage selection (enable/disable different planning strategies)
 
         # Stage 0 - Startup-Mode = Just go forward in the first frames
@@ -101,7 +100,6 @@ class PathPlanning:
                     full_path = np.vstack([self.car_position, straight_path])
                     curvature = max(self.calculate_curvature(full_path), self.min_curvature_value)
                 
-                    
                     self.last_path = full_path
                     self.last_curvature = curvature
                     full_path = self.resample_path_uniform_distance(full_path)
@@ -190,7 +188,7 @@ class PathPlanning:
                     angle = np.arccos(np.clip(np.dot(v1, v2), -1.0, 1.0))
                     
                     # Only adjust points at significant angles
-                    if angle > 0.01:  # About 5.7 degrees
+                    if angle > 0.01:
                         middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2.5
 
                 middle_points = self.detect_and_fix_zigzag(middle_points, angle_threshold=0.5)
@@ -202,7 +200,6 @@ class PathPlanning:
                     B = middle_points[i]
 
                     length = np.linalg.norm(B - A)
-                    #print(length)
                     if length > 1:
                         np.delete(middle_points, i)
                         removedPoints += 1
@@ -374,22 +371,6 @@ class PathPlanning:
         
         return x_fixed, y_fixed, t
 
-    def update_facing_vector(self, end_point):
-        """
-        Update the facing vector based on the end point.
-        
-        Args:
-        end_point (np.ndarray): The end point of the path, shape (2,)
-        """
-        # Calculate direction from car position to end point
-        direction = end_point - self.car_position
-        
-        # Normalize direction to get unit vector
-        direction_norm = np.linalg.norm(direction)
-        if direction_norm > 0:
-            self.facing_vector = direction / direction_norm
-            print(f"Updated facing vector: {self.facing_vector}")
-    
     def check_straight_line_validity(self, left_points, right_points):
         """
         Check if a straight line path from the car's position is valid.
@@ -404,7 +385,6 @@ class PathPlanning:
         if len(left_points) < 2 or len(right_points) < 2:
             print("Not enough points in lane boundaries")
             self.consecutive_valid_count = 0
-            self.using_facing_mode = False
             return None
         
         # Trim initial points
@@ -414,19 +394,11 @@ class PathPlanning:
         # Get furthest visible point in middle of path
         end_point = (left_points[-1] + right_points[-1]) / 2
         
-        # Decide whether to use car-to-end-point path or facing vector path
-        if not self.using_facing_mode:
-            # Create straight line path from car to end point (center path)
-            t = np.linspace(0, 1, len(left_points))
-            straight_path = np.outer(1-t, self.car_position) + np.outer(t, end_point)
-            print(f"Using center path mode. Consecutive valid: {self.consecutive_valid_count}")
-        else:
-            # Use facing vector to determine path
-            # Calculate the maximum distance we can see
-            max_distance = np.linalg.norm(end_point - self.car_position)
-            t = np.linspace(0, max_distance, len(left_points))
-            straight_path = np.array([self.car_position + i * self.facing_vector for i in t])
-            print(f"Using facing vector mode: {self.facing_vector}")
+        # Calculate the maximum distance we can see
+        max_distance = np.linalg.norm(end_point - self.car_position)
+        t = np.linspace(0, max_distance, len(left_points))
+        straight_path = np.array([self.car_position + i * self.facing_vector for i in t])
+        print(f"Using facing vector mode: {self.facing_vector}")
         
         # Check if path is valid (all points inside lane)
         all_valid = True
@@ -446,20 +418,9 @@ class PathPlanning:
                     break
         
         # Update tracking based on validity
-        if all_valid:
-            if not self.using_facing_mode:
-                self.consecutive_valid_count += 1
-                if self.consecutive_valid_count >= self.consecutive_valid_threshold:
-                    # Switch to facing mode and update facing vector
-                    self.using_facing_mode = True
-                    self.update_facing_vector(end_point)
-                    print("Switching to facing mode")
-            
+        if all_valid:           
             return straight_path[1:]  # Return valid path points
         else:
-            # Reset on invalid path
-            self.consecutive_valid_count = 0
-            self.using_facing_mode = False
             return None
             
     def is_point_inside_lane(self, point, left_segment, right_segment):
