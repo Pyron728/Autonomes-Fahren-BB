@@ -22,7 +22,7 @@ class PathPlanning:
         self.number_of_points = 50
 
         self.desired_distance = 6.5
-
+        self.adjustment_weight = 2
         #Last known path and curvature 
         self.last_path = None
         self.min_curvature_value = 0.05
@@ -189,7 +189,7 @@ class PathPlanning:
                     
                     # Only adjust points at significant angles
                     if angle > 0.01:
-                        middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*2.5
+                        middle_points[i] = middle_points[i] + -normal[i] * velocity[i]*self.adjustment_weight
 
                 middle_points = self.detect_and_fix_zigzag(middle_points, angle_threshold=0.5)
 
