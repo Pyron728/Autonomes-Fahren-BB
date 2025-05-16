@@ -20,25 +20,13 @@ class PathPlanning:
         self.just_use_middle_path = False # Stage 1 - Use the middle curve
         self.check_straight_line = False  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
         self.just_use_vecotrs = True # Stage 3 - Move the vecotrs in curves to the inner lane
-
-        self.other_splines = True # Stage 4 - Spline creation with the Apex-point to maximise the radius
-
         self.number_of_points = 50
 
         self.desired_distance = 6.5
-        # Stage 3 Parameters/Storage Variables
-        self.apex_history = [] # 
-        self.max_history_length = 5  # Reduced from 10 for faster response
-        self.curvature_threshold = 0.001  # Reduced from 0.001      
-        self.min_curve_idx = 30  # Reduced from 30
-        self.lookahead_distance = 50  # How far ahead to analyze for upcoming curves    
-        self.future_weight = 0.5 # Wiehgt of the predicted curves
-        self.min_curvature_value = 0.05  # Ensures non-zero curvature for steering  
 
         #Last known path and curvature for smoothing transitions
         self.last_path = None
         self.last_curvature = self.min_curvature_value
-        self.path_smoothing_factor = 0.3  # How much to blend with previous path
 
     def plan(self, left_lane_boundary, right_lane_boundary):
         """
@@ -224,188 +212,6 @@ class PathPlanning:
 
                 return middle_points, curvature
 
-            # Stage 4:  Use a Spline to the apex to maximise the radius
-            if self.other_splines:
-                # Prepare splines for left and right boundaries with caution to not crash it if we have insufficient points
-                try:
-                    # Minimum required points for splprep
-                    if len(left) < 4 or len(right) < 4:
-                        # Fall back to middle path with no apex
-                        final_path = np.vstack([self.car_position, middle_points])
-                        curvature = max(self.calculate_curvature(final_path), self.min_curvature_value)
-                        
-                        # Apply path smoothing with previous path
-                        if self.last_path is not None and len(self.last_path) == len(final_path):
-                            final_path = self.last_path * self.path_smoothing_factor + final_path * (1 - self.path_smoothing_factor)
-                            curvature = self.last_curvature * self.path_smoothing_factor + curvature * (1 - self.path_smoothing_factor)
-                        
-                        self.last_path = final_path
-                        self.last_curvature = curvature
-                        return final_path, curvature
-                        
-                    tck_left, _ = splprep(left.T, s=0)
-                    tck_right, _ = splprep(right.T, s=0)
-                except TypeError as e:
-                    # Handle "m > k must hold" error
-                    if "m > k must hold" in str(e):
-                        # Fall back to simple center line path
-                        final_path = np.vstack([self.car_position, middle_points])
-                        curvature = max(self.calculate_curvature(final_path), self.min_curvature_value)
-                        
-                        # Apply path smoothing with previous path
-                        if self.last_path is not None and len(self.last_path) == len(final_path):
-                            final_path = self.last_path * self.path_smoothing_factor + final_path * (1 - self.path_smoothing_factor)
-                            curvature = self.last_curvature * self.path_smoothing_factor + curvature * (1 - self.path_smoothing_factor)
-                        
-                        self.last_path = final_path
-                        self.last_curvature = curvature
-                        return final_path, curvature
-                except Exception as e:
-                    # General error handling for any spline creation issues
-                    print(f"Spline error: {e}")
-                    final_path = np.vstack([self.car_position, middle_points])
-                    curvature = max(self.calculate_curvature(final_path), self.min_curvature_value)
-                    
-                    # Apply path smoothing with previous path
-                    if self.last_path is not None and len(self.last_path) == len(final_path):
-                        final_path = self.last_path * self.path_smoothing_factor + final_path * (1 - self.path_smoothing_factor)
-                        curvature = self.last_curvature * self.path_smoothing_factor + curvature * (1 - self.path_smoothing_factor)
-                    
-                    self.last_path = final_path
-                    self.last_curvature = curvature
-                    return final_path, curvature
-                
-                # Generate parameter values for spline evaluation
-                u = np.linspace(0, 1, 100)
-                
-                # Evaluate splines
-                left_curve = np.array(splev(u, tck_left)).T
-                right_curve = np.array(splev(u, tck_right)).T
-                
-                # Calculate first derivatives
-                left_deriv1 = np.array(splev(u, tck_left, der=1)).T
-                right_deriv1 = np.array(splev(u, tck_right, der=1)).T
-                
-                # Calculate second derivatives
-                left_deriv2 = np.array(splev(u, tck_left, der=2)).T
-                right_deriv2 = np.array(splev(u, tck_right, der=2)).T
-                
-                # Calculate curvature: κ = |x'y'' - y'x''| / (x'² + y'²)^(3/2)
-                left_curvature = np.abs(left_deriv1[:,0] * left_deriv2[:,1] - left_deriv1[:,1] * left_deriv2[:,0]) / \
-                                np.power(left_deriv1[:,0]**2 + left_deriv1[:,1]**2, 1.5)
-                
-                right_curvature = np.abs(right_deriv1[:,0] * right_deriv2[:,1] - right_deriv1[:,1] * right_deriv2[:,0]) / \
-                                np.power(right_deriv1[:,0]**2 + right_deriv1[:,1]**2, 1.5)
-                
-                # Filter out small curvature values in straight lines
-                left_curvature[left_curvature < self.curvature_threshold] = 0
-                right_curvature[right_curvature < self.curvature_threshold] = 0
-                middle_curve = (left_curve + right_curve) / 2 
-                vectors = np.zeros((len(middle_curve)-1, 2))
-                for i in range(len(middle_curve)-1):
-                    vectors[i] = middle_curve[i+1] - middle_curve[i]
-
-                # Sign indicates direction: positive = left turn, negative = right turn
-                signed_curvatures = np.zeros(len(middle_curve)-2)
-                for i in range(len(middle_curve)-2):
-
-                    v1 = vectors[i]
-                    v2 = vectors[i+1]
-                    cross_z = v1[0]*v2[1] - v1[1]*v2[0]
-                    
-                    v1_mag = np.linalg.norm(v1)
-                    v2_mag = np.linalg.norm(v2)
-                    if v1_mag > 0.001 and v2_mag > 0.001:  # Avoid division by zero
-                        signed_curvatures[i] = cross_z / (v1_mag * v2_mag)
-                    else:
-                        signed_curvatures[i] = 0
-                abs_curvatures = np.abs(signed_curvatures)
-                
-                max_curvature_idx = np.argmax(abs_curvatures)
-                
-                lookahead_idx = min(max_curvature_idx + self.lookahead_distance, len(abs_curvatures) - 1)
-                future_curvature_region = abs_curvatures[max_curvature_idx:lookahead_idx+1]
-                
-                if len(future_curvature_region) > 0:
-                    future_max_idx = np.argmax(future_curvature_region) + max_curvature_idx
-                    # Blend current and future curvature points based on weights
-                    if abs_curvatures[future_max_idx] > abs_curvatures[max_curvature_idx] * 0.7:
-                        max_curvature_idx = int(max_curvature_idx * (1 - self.future_weight) + 
-                                            future_max_idx * self.future_weight)
-                        
-                # Skip apex calculation if curvature is too low (we're in a straight section)
-                if abs_curvatures[max_curvature_idx] < self.curvature_threshold * 30:
-                    final_path = np.vstack([self.car_position, middle_points])
-                    curvature = max(self.calculate_curvature(final_path), self.min_curvature_value)               
-                    if self.last_path is not None and len(self.last_path) == len(final_path):
-                        final_path = self.last_path * self.path_smoothing_factor + final_path * (1 - self.path_smoothing_factor)
-                        curvature = self.last_curvature * self.path_smoothing_factor + curvature * (1 - self.path_smoothing_factor)
-                    
-                    self.last_path = final_path
-                    self.last_curvature = curvature
-                    return final_path, curvature
-                # Use a region around the maximum curvature point to determine turn direction
-                region_start = max(0, max_curvature_idx - 5)
-                region_end = min(len(signed_curvatures), max_curvature_idx + 5)
-                turn_region_curvatures = signed_curvatures[region_start:region_end]
-                # Average sign in the region of highest curvature gives overall turn direction
-                is_right_turn = np.mean(turn_region_curvatures) > 0
-                inner_points = right_points if is_right_turn else left_points
-                dx = np.gradient(inner_points[:, 0])
-                dy = np.gradient(inner_points[:, 1])
-                ddx = np.gradient(dx)
-                ddy = np.gradient(dy)
-                curvatures = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2)**1.5
-                apex_index = np.argmax(np.abs(curvatures))
-                apex_point = inner_points[apex_index - 5]  # get early index of the curve
-                # Start point
-                car_forward_vector = np.array([0, -1])
-                
-                # Reduced back offset for faster response to curves
-                back_offset = 0.5  # reduced from 1.0
-                start_behind = self.car_position + car_forward_vector * back_offset
-                # If we detect a curve, bias the starting point slightly in that direction
-                outward_vec = np.zeros(2)
-                if is_right_turn:
-                    outward_vec = left_curve[0] - right_curve[0]
-                else:
-                    outward_vec = right_curve[0] - left_curve[0]
-                # Normalize and apply outward offset with curve-aware adjustment
-                outward_vec /= (np.linalg.norm(outward_vec) + 1e-6)
-                
-                curve_bias = min(1.8, abs_curvatures[max_curvature_idx] * 70) # responsiveness
-                start_point = start_behind + outward_vec * curve_bias
-                end_point = (left_points[-1] + right_points[-1]) / 2
-                car_to_apex = apex_point - start_point
-                is_apex_behind = np.dot(car_to_apex, car_forward_vector) < 0
-                apex_x = apex_point[0]
-                end_x = end_point[0]
-                outer_behind_apex = (apex_x < end_x) if is_right_turn else (apex_x > end_x)
-
-                if is_apex_behind:
-                    key_points = np.array([start_point, end_point])
-                elif outer_behind_apex:
-                    extended_inner = (left_curve if is_right_turn else right_curve)
-                    extended_point = extended_inner[-1]   
-                    key_points = np.array([start_point, apex_point, extended_point])
-                elif max_curvature_idx < self.min_curve_idx and len(abs_curvatures) > self.min_curve_idx:
-                    key_points = np.array([start_point, end_point])
-                else:
-                    mid_point1 = start_point * 0.8 + apex_point * 0.2
-                    mid_point2 = start_point * 0.4 + apex_point * 0.6
-                    key_points = np.array([start_point, mid_point1, mid_point2, apex_point, end_point])
-
-                t = np.linspace(0, 1, len(key_points))
-                spline_x = CubicSpline(t, key_points[:, 0])
-                spline_y = CubicSpline(t, key_points[:, 1])
-
-                t_values = np.linspace(0, 1, self.number_of_points)
-                spline_path = np.zeros((self.number_of_points, 2))
-                for i, t_val in enumerate(t_values):
-                    spline_path[i, 0] = spline_x(t_val)
-                    spline_path[i, 1] = spline_y(t_val)
-                curvature = self.calculate_curvature(spline_path) 
-
             final_path = self.resample_path_uniform_distance(full_path)
 
         except Exception as e:
@@ -524,45 +330,6 @@ class PathPlanning:
             t /= t[-1]  # normalize to [0, 1]
         
         return x_fixed, y_fixed, t
-
-    def calculate_true_path_curvature(self, points):
-        """Calculate curvature based on relative changes in direction, not absolute coordinates"""
-        if len(points) < 3:
-            return np.zeros(len(points))
-        
-        # Calculate vectors between consecutive points
-        vectors = points[1:] - points[:-1]
-        
-        # Normalize the vectors
-        magnitudes = np.sqrt(np.sum(vectors**2, axis=1))
-        unit_vectors = vectors / magnitudes[:, np.newaxis]
-        
-        # Calculate the angle changes between consecutive vectors (dot product)
-        curvatures = np.zeros(len(points))
-        for i in range(len(unit_vectors)-1):
-            dot_product = np.clip(np.dot(unit_vectors[i], unit_vectors[i+1]), -1.0, 1.0)
-            angle_change = np.arccos(dot_product)
-            
-            # Assign curvature to the middle point of the three points used
-            curvatures[i+1] = angle_change
-        
-        # Scale by distance to get proper curvature units
-        avg_segment_length = np.mean(magnitudes)
-        curvatures = curvatures / avg_segment_length
-        
-        return curvatures
-
-    def create_highlight_circle(self, center_point, radius=5, num_points=12):
-        #Creates a circle of points around a specified center point for visualization purposes.
-        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
-        circle_points = np.zeros((num_points, 2))
-        for i, angle in enumerate(angles):
-            x = center_point[0] + radius * np.cos(angle)
-            y = center_point[1] + radius * np.sin(angle)
-            circle_points[i] = [x, y]
-        
-        return circle_points
-    
 
     def update_facing_vector(self, end_point):
         """
