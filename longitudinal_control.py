@@ -5,14 +5,14 @@ from collections import deque
 class LongitudinalControl:
     def __init__(self):
         # Speed limits
-        self.max_speed = 90.0
-        self.min_speed = 20.0
+        self.max_speed = 105.0
+        self.min_speed = 50.0
 
         # Speed prediction weights
-        self.curvature_weight = 3.0
+        self.curvature_weight = 3.2
 
         # PID controller parameters
-        self.kp = 0.8
+        self.kp = 1.0
         self.ki = 0.05
         self.kd = 0.03
 
@@ -23,46 +23,32 @@ class LongitudinalControl:
         self.integral_max = 6.0  # Anti-windup limit
 
         # Acceleration/brake scaling
-        self.accel_gain = 0.3
-        self.brake_gain = 0.1
+        self.accel_gain = 0.2
+        self.brake_gain = 0.03
 
         # Steering safety filter
         self.steer_safety_threshold = 0.9
         self.steer_history = deque(maxlen=5)
-        self.curvature_history = deque(maxlen=25)
+        self.curvature_history = deque(maxlen=4)
 
 
     def predict_target_speed(self, trajectory):
-        
-        # Check if the trajectory is valid
-        if trajectory is None or len(trajectory) < 3:
-            curvature = 0.0
-        else:
-            # Limit n to the number of available points
-            n = len(trajectory)
+        # cut all points that are behind the car
+        closest_index = np.argmin(np.linalg.norm(trajectory - [48, 64], axis=1))
+        trajectory = trajectory[closest_index:]
 
-            # Calculate curvature for consecutive triplets of points
-            curvatures = []
-            for i in range(n - 2):  # Ensure we have at least 3 points for each triplet
-                p1, p2, p3 = map(np.array, [trajectory[i], trajectory[i + 1], trajectory[i + 2]])
-                vec1, vec2 = p2 - p1, p3 - p2
-                norm1, norm2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
+        # get first n points
+        n = min(15, len(trajectory))
+        trajectory = trajectory[:n]
 
-                if norm1 > 1e-4 and norm2 > 1e-4:
-                    dot = np.clip(np.dot(vec1, vec2) / (norm1 * norm2), -1.0, 1.0)
-                    curvature = np.arccos(dot)
-                    curvatures.append(abs(curvature))
+        # transform points to be relative to car
+        trajectory = trajectory - np.array([48, 64])
 
-            # Calculate the average curvature
-            curvature = np.mean(curvatures) if curvatures else 0.0
+        # calc target speed based on average x value of trajectory
+        avg_x_deviation = np.mean(np.abs(trajectory[:, 0]))
+        self.curvature_history.append(avg_x_deviation)
+        return np.clip(self.max_speed - np.mean(self.curvature_history)  * self.curvature_weight, self.min_speed, self.max_speed)
 
-        self.curvature_history.append(curvature)
-
-        # Adjust target speed based on curvature
-        curvature_factor = 1.0 - self.curvature_weight * np.clip(np.mean(self.curvature_history) / np.pi, 0.0, 1.0)
-        target_speed = self.max_speed * curvature_factor
-
-        return np.clip(target_speed, self.min_speed, self.max_speed)
 
     def control(self, current_speed, target_speed, steer):
 
@@ -94,6 +80,6 @@ class LongitudinalControl:
             gas = 0.0
 
         if steer > 0.5:
-            gas *= 0.7
+            gas *= 0.5
 
         return gas, brake

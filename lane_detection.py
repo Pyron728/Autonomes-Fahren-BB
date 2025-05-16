@@ -33,15 +33,15 @@ class LaneDetection:
 			return self.last_left_points, self.last_right_points
 
 		# Use DBSCAN for clustering
-		dbscan = DBSCAN(eps=4, min_samples=1).fit(edge_points)  # eps: how close points need to be to be considered in the same cluster
+		dbscan = DBSCAN(eps=3, min_samples=1).fit(edge_points)  # eps: how close points need to be to be considered in the same cluster
 		labels = dbscan.labels_
 
 		# Separate points into clusters
 		unique_labels = set(labels)
 		clusters = {label: edge_points[labels == label] for label in unique_labels if label != -1}  # Exclude noise (-1)
 
-		 # Ignore clusters with less than 30 points
-		clusters = {label: points for label, points in clusters.items() if len(points) > 30}
+		 # Ignore clusters with less than 15 points
+		clusters = {label: points for label, points in clusters.items() if len(points) > 15}
 
 		# Compute closest points to the car position for each cluster
 		car_pos = np.array([48, 64])
@@ -203,7 +203,7 @@ class LaneDetection:
 		output = np.zeros_like(image)
 		for i in range(0, image.shape[0] - 1):
 			for j in range(0, image.shape[1] - 1):
-				if image[i, j] != 0 and image[i + 1, j] != 0 and image[i + 1, j + 1] != 0 and image[i, j + 1]:
+				if image[i, j] != 0 and image[i + 1, j] != 0 and image[i + 1, j + 1] != 0 and image[i, j + 1] != 0:
 					output[i+1, j+1] = image[i, j] / 4 + image[i + 1, j] / 4 + image[i + 1, j + 1] / 4 + image[i, j + 1] / 4
 				else:
 					output[i+1, j+1] = 0

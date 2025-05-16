@@ -1,4 +1,5 @@
 import argparse
+import pickle
 
 import cv2
 import gymnasium as gym
@@ -7,6 +8,7 @@ from env_wrapper import CarRacingEnvWrapper
 from input_controller import InputController
 from lateral_control import LateralControl
 from longitudinal_control import LongitudinalControl
+from matplotlib import pyplot as plt
 
 
 def run(env, input_controller: InputController):
@@ -17,14 +19,23 @@ def run(env, input_controller: InputController):
     state_image, info = env.reset(seed=seed)
     total_reward = 0.0
 
+    fig = plt.figure()
+    plt.ion()
+    plt.show()
+    speed_history = []
+    target_speed_history = []
+
     while not input_controller.quit:
         target_speed = longitudinal_control.predict_target_speed(
-            info["trajectory"], info["speed"], input_controller.steer
-        )
-        acceleration, braking = longitudinal_control.control(
-            info["speed"], target_speed, input_controller.steer
+            info["trajectory"]
         )
         steering_angle = lateral_control.control(info["trajectory"], target_speed)
+        acceleration, braking = longitudinal_control.control(
+            info["speed"], target_speed, steering_angle
+        )
+
+        speed_history.append(info["speed"])
+        target_speed_history.append(target_speed)
 
         cv_image = np.asarray(state_image, dtype=np.uint8)
         for point in info["trajectory"]:
@@ -37,6 +48,14 @@ def run(env, input_controller: InputController):
         cv_image = cv2.resize(cv_image, (cv_image.shape[1] * 6, cv_image.shape[0] * 6))
         cv2.imshow("Car Racing - Lateral Control", cv_image)
         cv2.waitKey(1)
+        # Longitudinal control plot
+        plt.gcf().clear()
+        plt.plot(speed_history, c="green")
+        plt.plot(target_speed_history)
+        try:
+            fig.canvas.flush_events()
+        except:
+            pass
 
         # Step the environment
         input_controller.update()
@@ -71,4 +90,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()# 
