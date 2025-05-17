@@ -1,65 +1,222 @@
 # Abschlussprojekt: Autonomer Rennwagen
 
-Dieses "Framework" enthält eine grundlegende Struktur für die Umsetzung einer modularen Pipeline für die Gymnasium Car Racing Simulation ([link](https://gymnasium.farama.org/environments/box2d/car_racing/)).
+Dieses Projekt enthält eine Umsetzung einer modularen Pipeline für die Gymnasium Car Racing Simulation ([link](https://gymnasium.farama.org/environments/box2d/car_racing/)).
 
-## 0. Requirements
 
-- Python >3.12
+## 0. Anforderungen
 
-## 1. Installation
+* Python ≥ 3.12
 
-Wir empfehlen die Pakete global zu installieren. Optional kann aber auch eine Virtuelle Umgebung angelegt werden:
+## 1. Weitere Installationen
 
-### 1.1 Globale Installation (Empfohlen)
+Folgende Installs müssen neben der Standartinstallation des Projektes (wie in der eig. ReadME) noch getätigt werden. Scikit-learn wird für die Lane Detection benötigt und Scipy für die Pfadplanung.
 
-1. Installieren aller python Pakete: `pip install "gymnasium[box2d]" numpy matplotlib scipy opencv-python`
-2. In den Source Ordner wechseln `cd <working-dir>`
-3. Testen der Installation: `python test_installation.py`. Danach sollte sich die Simulation öffnen und das Fahrzeug zufällig bewegen.
-
-### 1.2 Installation in virtueller Umgebung (Optional)
-
-1. Erstellen einer virtuellen Umgebung im Projektordner:
-
-    ```bash
-    cd <working-dir>
-    python -m venv .venv
-    ```
-
-2. Aktivieren der virtuellen Umgebung: `source .venv/bin/activate`
-3. Nun werden alle Python Befehle in dieser Umgebung ausgeführt und Pakete installiert.
-   **Wichtig: Die Umgebung muss für jedes Terminal neu aktiviert werden.**
-4. In vscode über `strg+shift+P` nach `Python: Select Interpreter` suchen und `.venv` als Interpreter auswählen.
-5. Installieren aller python Pakete: `pip install "gymnasium[box2d]" numpy matplotlib scipy opencv-python`
-6. Testen der Installation: `python test_installation.py`. Danach sollte sich die Simulation öffnen und das Fahrzeug zufällig bewegen.
-
-## 2. Dateistruktur
-
-Das Projekt ist wie folgt zu strukturieren:
-
-```python
-working-dir/
-| - .gitignore # Definition von Dateien, die nicht von git getrackt werden sollen
-| - car.py # Beschreibt das Fahrzeug und enthält die gesamte Pipeline
-| - env_wrapper.py # Wrapper für die Gymnasium Car Racing Simulation
-| - input_controller.py # Manuelle Steuerung des Fahrzeugs
-| - lane_detection.py # Modul zur Spurerkennung
-| - lateral_control.py # Modul zur Querregelung
-| - longitudinal_control.py # Modul zur Längsregelung
-| - main.py # Hauptdatei, die die Pipeline über 5 Iterationen ausführt
-| - path_planning.py # Modul zur Pfadplanung
-| - README.md # Diese Datei
-| - test_installation.py # Testet die Installation
-| - test_lane_detection.py # Testet die Spurerkennung
-| - test_lateral_control.py # Testet die Querregelung
-| - test_longitudinal_control.py # Testet die Längsregelung
-| - test_path_planning.py # Testet die Pfadplanung
-| - test_pipeline.py # Testet die gesamte Pipeline
+```bash
+pip install scipy scikit-learn
 ```
 
-## 3. Ausführung
 
-Die test Dateien können mit `python <test-file>.py` ausgeführt werden. Die Simulation wird sich öffnen und das Fahrzeug wird sich entsprechend der Pipeline bewegen. Um das Endergebnis zu simulieren, kann die `main.py` Datei ausgeführt werden. Sie führt die Pipeline über 5 Iterationen aus und berechnet den durchschnittlichen Score.
+## 2. Projektstruktur
 
-## 4. Hinweise
+```bash
+working-dir/
+│
+├── car.py                    # Fahrzeug und Hauptpipeline
+├── env_wrapper.py           # Gymnasium-Wrapper
+├── input_controller.py      # Manuelle Steuerung
+├── lane_detection.py        # Spurdetektion
+├── lateral_control.py       # Querregelung
+├── longitudinal_control.py  # Längsregelung
+├── path_planning.py         # Pfadplanung
+├── main.py                  # Pipeline-Loop
+├── README.md                # Diese Datei
+├── test_*.py                # Testdateien für einzelne Module
+└── .gitignore               # Git-Konfiguration
+```
 
-Die Dateien `main.py`, `env_wrapper.py` und `input_controller.py` dürfen nicht verändert werden, damit die Ergebnisse vergleichbar bleiben. Alle anderen Dateien können beliebig verändert werden.
+## 3. Module
+
+### 3.1 Spurdetektion – `lane_detection.py`
+
+Dieses Modul erkennt linke und rechte Fahrspurbegrenzungen basierend auf Bildverarbeitung.
+
+#### Vorgehensweise
+
+1. **Vorverarbeitung**: Bild zuschneiden, Vorderwagen maskieren, Segmentierung via KMeans, Entfernen von Grasfarben.
+2. **Kantenerkennung**: Laplace-Filter, Erosion, Normalisierung.
+3. **Clustering**: DBSCAN zur Erkennung zusammenhängender Punkte.
+4. **Sortierung**: Punkte werden nach Fahrzeugnähe geordnet.
+5. **Fehlerbehandlung**: Fallback auf letzte gültige Spur bei Erkennungsfehlern.
+6. **Debug-Visualisierung**: Darstellung der Spurpunkte in der Simulation.
+
+### 3.2 Pfadplanung – `path_planning.py`
+
+Dieses Modul plant eine Trajektorie in Form von Wegpunkten innerhalb der Fahrspur.
+
+#### Überblick
+
+Das System nutzt drei aufeinander aufbauende **Stages**, die modular aktiviert werden können.
+
+#### Stage 1: Mittelspurpfad (`just_use_middle_path = True`)
+
+* Berechnet indexweise die Mitte zwischen linker und rechter Spur.
+* Robust und standardmäßig aktiviert.
+
+#### Stage 2: Geradenerkennung (`check_straight_line = False`)
+
+* Schaut ob eine Gerade vom Auto bis zum Mittelendpunkt valide ist (bzw. in der Spur liegt) und gibt diesen falls ja zurück
+* Dadurch können sehr breite Kurven oder Doppelkurven stark optimeirt werden, aber da der Radius bei steilen Kurven sinkt, da man sich automatisch der inneren Spur bis zum Umschaltpunkt annähert, ist dies ebenfalls standartmäßig aus.
+* Kann nicht alleine bentuzt werden und kann nur in Kombination mit Stufe 3 benutzt werden
+
+#### Stage 3: Vektorbasierte Optimierung (`just_use_vectors = False`)
+
+Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung der Tangentenrichtungen. Da bei manchen Tracks bzw. Kurven dieser Pfad jedoch zum Ausreßen geführt hat, ist standartmäßig die Mittelspur aktiv, da diese Robuster ist un der Score auch gut genug war und nicht diese Stage:
+
+##### Funktionsweise
+
+1. **Spline-Glättung**:
+
+   * Die Mittelspur wird durch Spline-Interpolation geglättet und auf eine feste Punktanzahl reduziert.
+
+2. **Geradheitstest**:
+
+   * Überprüft, ob der Pfad weitgehend linear verläuft.
+   * Bei sehr geraden Pfaden wird auf Vektorverschiebung verzichtet und die Mitte ausgegeben.
+
+3. **Tangentennormalen-Berechnung**:
+
+   * Aus den Positionen werden Tangenten- und Normalenvektoren bestimmt.
+   * Die Tangente beschreibt die Bewegungsrichtung, die Normale die Kurvenrichtung.
+
+4. **Punktanpassung bei Kurven**:
+
+   * Bei signifikanten Richtungsänderungen (gemessen über Winkelabweichung) wird der Punkt entlang der Normalen verschoben.
+   * Wie sehr die Punkte verschoben werden hängt von dem Parameter adjusment_weight ab.
+
+5. **Zickzack-Erkennung**:
+
+   * Entfernt oszillierende Pfade über Winkelgrenzen, um einzelne Ausreßerpunkte zu entfernen.
+
+6. **Entfernung zu langer Segmente**:
+
+   * Überlange Streckensegmente werden entfernt, um die Pfaddichte einheitlich zu halten.
+
+
+
+#### Spezialfälle
+
+* **Startmodus**: In den ersten Frames wird ein gerader Pfad generiert, da hier die gesamte Strecke sichtbar ist.
+* **Notfallpfad**: Wenn keine Spur erkannt wird, wird ein alternativer Pfad nach vorn oder entlang der erkannten Seite erzeugt.
+
+#### Resampling:
+
+   * Es wird immer ein Resampling durchgeführt, um einen gleichmäßiger Abstand der Punkte zu gewährleisten, der sich an den Test-Modulen orientiert. Es wird die insgesamte Länge berechnet und dann mittels Interpolation die Anzahl an Punktne erstellt, die der gewünschten Länge entsprechen (z.B. 6.5 Pixel).
+
+#### Krümmungsberechnung
+
+* Die Krümmung wird über drei Referenzpunkte (Anfang, Mitte, Ende) berechnet.
+
+#### Parameter
+
+| Parameter             | Beschreibung                                            | Standardwert |
+| --------------------- | ------------------------------------------------------- | ------------ |
+| `desired_distance`    | Abstand zwischen Wegpunkten im finalen Pfad             | `6.5`        |
+| `adjustment_weight`   | Gewichtung für Kurvenanpassung in der Vektoroptimierung | `2.0`        |
+| `min_curvature_value` | Minimaler Krümmungswert zur numerischen Stabilisierung  | `0.05`       |
+| `startup_counter`     | "Frames", wie lange der Startup-Mode halten soll        | `60`       |
+
+
+
+### 3.2 Querregelung – `lateral_control.py`
+
+Dieses Modul implementiert einen vereinfachten **Stanley Controller**, der auf Querabweichung (Crosstrack Error, CTE) und Tangentenwinkel der Trajektorie basiert. Die Steuerung erfolgt rein positionsbasiert, wobei die aktuelle Fahrzeugposition fest auf `[48, 62]` gesetzt ist.
+
+#### Eigenschaften
+
+* `k_e`: Verstärkung der Korrektur basierend auf Querfehler
+* `k_s`: Geschwindigkeitsdämpfung zur Stabilisierung bei höherem Tempo
+* `steering_gain`: Skalierung des Lenkergebnisses (z. B. zur Hardwareanpassung)
+
+#### Methode
+
+```python
+control(trajectory: np.ndarray, speed: float) -> float
+```
+
+* **Input:**
+
+  * `trajectory`: geplante Trajektorie als Liste von 2D-Punkten (`np.ndarray`)
+  * `speed`: aktuelle Fahrzeuggeschwindigkeit
+* **Output:**
+
+  * berechneter Lenkwinkel in Radiant (float)
+
+#### Vorgehen
+
+1. Bestimmung des nächstgelegenen Punkts auf der Trajektorie vor dem Fahrzeug
+2. Berechnung der Trajektorientierung (Tangente)
+3. Projektion des Querfehlers auf die Vorderachse
+4. Anwendung der Stanley-Regelung:
+
+   $$
+   \delta = \theta + \arctan\left(\frac{k_e \cdot CTE}{v + k_s}\right)
+   $$
+
+   wobei $\theta$ der Tangentenwinkel ist.
+
+---
+
+### 3.4 Längsregelung – `longitudinal_control.py`
+
+
+
+Die Längsregelung plant die Geschwindigkeit und erzeugt das Gas/Bremsverhalten mit einemmit einem **PID-Controller**. 
+
+#### Eigenschaften
+
+* **Zielgeschwindigkeit basiert auf:**
+
+  * **Querabweichung:** größere Abweichung → geringere Zielgeschwindigkeit
+  * **Kurvigkeit:** höhere Kurvigkeit → geringere Zielgeschwindigkeit
+* **PID-Parameter:**
+
+  * `kp`: Proportionalanteil
+  * `ki`: Integralanteil
+  * `kd`: Differentialanteil
+* **Sicherheitsmechanismen:**
+
+  * `steer_safety_threshold`: deaktiviert Beschleunigung bei zu starker Lenkung
+  * Anti-Windup für Integrator (`integral_max`)
+  * Historienfilter für Glättung der Abweichung und Kurvigkeit
+
+#### Methoden
+
+##### `predict_target_speed(trajectory: np.ndarray) -> float`
+
+Berechnet die Zielgeschwindigkeit aus:
+
+* `x_deviation_target_speed()`: mittlere Querabweichung über die ersten 15 Punkte
+* `curvature_target_speed()`: mittlere Winkeländerung entlang der Trajektorie
+  → Beide Geschwindigkeiten werden gemittelt.
+
+##### `control(current_speed: float, target_speed: float, steer: float) -> Tuple[float, float]`
+
+* **Input:**
+
+  * `current_speed`: aktuelle Fahrzeuggeschwindigkeit
+  * `target_speed`: zuvor berechnete Zielgeschwindigkeit
+  * `steer`: Lenkwinkel (z. B. von `LateralControl`)
+* **Output:**
+
+  * `gas`: Gaswert (0–1)
+  * `brake`: Bremswert (0–1)
+
+#### Regelalgorithmus
+
+1. Berechne Geschwindigkeitsfehler
+2. Aktualisiere PID-Variablen (Fehler, Integral, Ableitung)
+3. Berechne Steuergröße
+4. Wandle Steuergröße in Gas oder Bremse um
+5. Wende Sicherheitsfilter an:
+
+   * Bei starkem Lenkverhalten wird Gas reduziert oder deaktiviert
