@@ -5,24 +5,21 @@ class PathPlanning:
     def __init__(self):        
         
         # Fixed Starting Point in front of the car
-        self.car_position = np.array([48, 68])
-        
-        self.startup_mode = True
-        self.startup_counter = 10  # first "frames" for startup mode so the zoom doesnt create a weird path
+        self.car_position = np.array([48, 68])     
         self.facing_vector = np.array([0, -1])  # Default facing vector (up)
-        self.consecutive_valid_count = 0
-        self.consecutive_valid_threshold = 40
-        # Stage selection (enable/disable different planning strategies)
 
-        # Stage 0 - Startup-Mode = Just go forward in the first frames
+        # Stage selection (enable/disable different planning strategies)
+        # Stage 0 - Startup-Mode = Just go forward in the first frames to better handle zoom
+        self.startup_mode = True
         # Stage 0.5 - Emergency-Path - If we go off lane, go back to one lane or search for new lane
         self.just_use_middle_path = True # Stage 1 - Use the middle curve
         self.check_straight_line = False  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
         self.just_use_vecotrs = False # Stage 3 - Move the vecotrs in curves to the inner lane
-        self.number_of_points = 50
 
-        self.desired_distance = 6.5
-        self.adjustment_weight = 2
+        self.desired_distance = 6.5 # Desired Distance between points 
+        self.adjustment_weight = 2  # Vector adjustment weight
+        self.startup_counter = 60  # first "frames" for startup mode so the zoom doesnt create a weird path
+
         #Last known path and curvature 
         self.last_path = None
         self.min_curvature_value = 0.05
@@ -40,20 +37,20 @@ class PathPlanning:
         """
         try:
             # For the first second, just go straight forward
-            if self.startup_mode and not self.just_use_middle_path:
+            if self.startup_mode:
                 if self.startup_counter > 0:
                     self.startup_counter -= 1
                     path_end = self.car_position + np.array([0, -1]) * 60              
-                    t = np.linspace(0, 1, self.number_of_points)
-                    straight_path = np.zeros((self.number_of_points, 2))
+                    t = np.linspace(0, 1, 50)
+                    straight_path = np.zeros((50, 2))
                     
                     for i, t_val in enumerate(t):
                         straight_path[i] = self.car_position * (1-t_val) + path_end * t_val
+                    straight_path = self.resample_path_uniform_distance(straight_path)               
                     
                     self.last_path = straight_path
                     self.last_curvature = self.min_curvature_value
 
-                    straight_path = self.resample_path_uniform_distance(straight_path)               
                     return straight_path, self.min_curvature_value
                 else:
                     self.startup_mode = False
@@ -61,10 +58,11 @@ class PathPlanning:
             # Emergency handling if we go offroad
             if len(left_lane_boundary) < 2 or len(right_lane_boundary) < 2:
                 emergency_path = self.create_emergency_path(left_lane_boundary, right_lane_boundary)
-                self.last_path = emergency_path
                 self.last_curvature = self.min_curvature_value
 
                 emergency_path = self.resample_path_uniform_distance(emergency_path)
+                self.last_path = emergency_path
+
                 return emergency_path, self.min_curvature_value
 
             
@@ -100,9 +98,9 @@ class PathPlanning:
                     full_path = np.vstack([self.car_position, straight_path])
                     curvature = max(self.calculate_curvature(full_path), self.min_curvature_value)
                 
-                    self.last_path = full_path
                     self.last_curvature = curvature
                     full_path = self.resample_path_uniform_distance(full_path)
+                    self.last_path = full_path
                     return full_path, curvature
                 
             # Stage 3: Use Vectors and move vectors inside the lane
@@ -214,7 +212,7 @@ class PathPlanning:
             final_path = self.resample_path_uniform_distance(full_path)
 
         except Exception as e:
-            print(f"Returning last path and curvature due to unexpected Error: {e}")
+            #print(f"Returning last path and curvature due to unexpected Error: {e}")
             return self.last_path, self.last_curvature
 
         self.last_path = final_path
@@ -356,7 +354,6 @@ class PathPlanning:
         x_fixed = np.array(x_fixed)
         y_fixed = np.array(y_fixed)
         
-        # Print info about created virtual points
         if virtual_count > 0:
             # print(f"Created {virtual_count} virtual points to replace duplicates")
             pass
@@ -384,8 +381,6 @@ class PathPlanning:
         np.ndarray or None: Valid path points or None if invalid
         """
         if len(left_points) < 2 or len(right_points) < 2:
-            print("Not enough points in lane boundaries")
-            self.consecutive_valid_count = 0
             return None
         
         # Trim initial points
@@ -395,71 +390,95 @@ class PathPlanning:
         # Get furthest visible point in middle of path
         end_point = (left_points[-1] + right_points[-1]) / 2
         
-        # Calculate the maximum distance we can see
-        max_distance = np.linalg.norm(end_point - self.car_position)
-        t = np.linspace(0, max_distance, len(left_points))
-        straight_path = np.array([self.car_position + i * self.facing_vector for i in t])
-        print(f"Using facing vector mode: {self.facing_vector}")
+        # Calculate direction vector from car to end point (instead of using facing vector)
+        direction_vector = end_point - self.car_position
+        distance = np.linalg.norm(direction_vector)
         
+        if distance < 1e-6:  # Avoid division by zero
+            return None
+        
+        # Normalize direction vector
+        direction_vector = direction_vector / distance
+        
+        # Create path points
+        t = np.linspace(0, distance, len(left_points))
+        straight_path = np.array([self.car_position + i * direction_vector for i in t])
         # Check if path is valid (all points inside lane)
         all_valid = True
-        for i in range(len(straight_path)):
-            # Create line segments between lane boundary points
-            if i < len(left_points) - 1 and i < len(right_points) - 1:
-                left_segment = np.array([left_points[i], left_points[i+1]])
-                right_segment = np.array([right_points[i], right_points[i+1]])
-               
-                # Check if path point is inside the lane segment
-                point = straight_path[i]
-                in_lane = self.is_point_inside_lane(point, left_segment, right_segment)
-               
-                if not in_lane:
-                    print(f"Point {i} is outside lane")
-                    all_valid = False
-                    break
+        for point in straight_path:
+            # Check if this point is inside the lane using proper point-in-polygon check
+            if not self.is_point_inside_lane_boundaries(point, left_points, right_points):
+                all_valid = False
+                break
         
         # Update tracking based on validity
-        if all_valid:           
+        if all_valid:          
             return straight_path[1:]  # Return valid path points
         else:
             return None
             
-    def is_point_inside_lane(self, point, left_segment, right_segment):
+    def is_point_inside_lane_boundaries(self, point, left_boundary, right_boundary):
         """
-        Check if a point is inside the lane using a precise coordinate system check.
+        Check if a point is inside the lane boundaries using proper geometric approach.
+        Works for any lane shape including curves and turns.
         
         Args:
         point (np.ndarray): The point to check, shape (2,)
-        left_segment (np.ndarray): Left lane segment, shape (2, 2)
-        right_segment (np.ndarray): Right lane segment, shape (2, 2)
+        left_boundary (np.ndarray): Left lane boundary points, shape (n, 2)
+        right_boundary (np.ndarray): Right lane boundary points, shape (n, 2)
         
         Returns:
         bool: True if point is inside the lane, False otherwise
         """
-        # Extract coordinates
-        point_x, point_y = point
-        left_x1, left_y1 = left_segment[0]
-        left_x2, left_y2 = left_segment[1]
-        right_x1, right_y1 = right_segment[0]
-        right_x2, right_y2 = right_segment[1]
+        # First find the closest points on both boundaries to our test point
+        left_distances = np.linalg.norm(left_boundary - point, axis=1)
+        right_distances = np.linalg.norm(right_boundary - point, axis=1)
         
-        # Debugging print
-        print('JETZT', point_x, point_y, point, left_segment, right_segment)
+        closest_left_idx = np.argmin(left_distances)
+        closest_right_idx = np.argmin(right_distances)
         
-        # Looking at the debug output, the correct check is:
-        # The point x should be greater than the leftmost x boundary
-        # The point x should be less than the rightmost x boundary
-        # The lane seems to run left-to-right
+        # Get the closest segment on each boundary
+        # For left boundary
+        if closest_left_idx == 0:
+            left_segment = left_boundary[:2]
+        elif closest_left_idx == len(left_boundary) - 1:
+            left_segment = left_boundary[-2:]
+        else:
+            left_segment = left_boundary[closest_left_idx-1:closest_left_idx+2]
         
-        # Get the maximum x of the left segment (rightmost point of left boundary)
-        max_left_x = max(left_x1, left_x2)
+        # For right boundary
+        if closest_right_idx == 0:
+            right_segment = right_boundary[:2]
+        elif closest_right_idx == len(right_boundary) - 1:
+            right_segment = right_boundary[-2:]
+        else:
+            right_segment = right_boundary[closest_right_idx-1:closest_right_idx+2]
         
-        # Get the minimum x of the right segment (leftmost point of right boundary)
-        min_right_x = min(right_x1, right_x2)
+        # Now check if the point is between these two segments
+        # Calculate the line connecting the closest points on each boundary
+        left_closest = left_boundary[closest_left_idx]
+        right_closest = right_boundary[closest_right_idx]
         
-        # Check if the point is between the left and right lane boundaries
-        # Point should be to the right of left boundary and to the left of right boundary
-        return max_left_x <= point_x <= min_right_x
+        # Vector from left boundary to right boundary
+        lane_vector = right_closest - left_closest
+        lane_length = np.linalg.norm(lane_vector)
+        
+        if lane_length < 1e-6:  # If points are too close, try adjacent points
+            return True  # Assume valid in this edge case
+        
+        lane_unit_vector = lane_vector / lane_length
+        
+        # Vector from left boundary to test point
+        test_vector = point - left_closest
+        
+        # Project test vector onto lane vector to get distance along lane
+        projection_dist = np.dot(test_vector, lane_unit_vector)
+        
+        # Point is inside lane if projection is between 0 and lane_length
+        is_inside = 0 <= projection_dist <= lane_length
+        
+        return is_inside
+
 
     def calculate_curvature(self, trajectory):
         """
@@ -494,10 +513,10 @@ class PathPlanning:
         elif left_valid and not right_valid:
             end_point = left[-1]
         else:
-            end_point = self.car_position + np.array([0, -1]) * 20
+            end_point = self.car_position + np.array([0, -1]) * 40
 
-        t = np.linspace(0, 1, self.number_of_points)
-        emergency_path = np.zeros((self.number_of_points, 2))        
+        t = np.linspace(0, 1, 50)
+        emergency_path = np.zeros((50, 2))        
         for i, t_val in enumerate(t):
             emergency_path[i] = self.car_position * (1-t_val) + end_point * t_val
         
