@@ -16,9 +16,9 @@ class PathPlanning:
 
         # Stage 0 - Startup-Mode = Just go forward in the first frames
         # Stage 0.5 - Emergency-Path - If we go off lane, go back to one lane or search for new lane
-        self.just_use_middle_path = False # Stage 1 - Use the middle curve
+        self.just_use_middle_path = True # Stage 1 - Use the middle curve
         self.check_straight_line = False  # Stage 2 - Doesnt work on by itself but can optimize double or wide curves
-        self.just_use_vecotrs = True # Stage 3 - Move the vecotrs in curves to the inner lane
+        self.just_use_vecotrs = False # Stage 3 - Move the vecotrs in curves to the inner lane
         self.number_of_points = 50
 
         self.desired_distance = 6.5
@@ -358,7 +358,8 @@ class PathPlanning:
         
         # Print info about created virtual points
         if virtual_count > 0:
-            print(f"Created {virtual_count} virtual points to replace duplicates")
+            # print(f"Created {virtual_count} virtual points to replace duplicates")
+            pass
         
         # Calculate a custom parameterization for the fixed path
         t = np.zeros(len(x_fixed))

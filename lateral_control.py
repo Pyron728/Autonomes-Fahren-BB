@@ -8,9 +8,9 @@ class LateralControl:
 
         # parameter for stanley controller
         # gain for correcting crosstrack error
-        self.k_e = .4
+        self.k_e = .7
         # damping for high speed
-        self.k_s = 1
+        self.k_s = 0.5
         self.steering_gain = 1
 
 

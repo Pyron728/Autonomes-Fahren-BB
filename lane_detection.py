@@ -56,7 +56,7 @@ class LaneDetection:
 		# Take the two largest clusters with the closest points to the car position
 		sorted_clusters.sort(key=lambda x: x[0])  # Sort by distance
 		if len(sorted_clusters) < 2:
-			print("Not enough clusters found.")
+			# print("Not enough clusters found.")
 			return self.last_left_points, self.last_right_points
 
 		# differentiate left and right

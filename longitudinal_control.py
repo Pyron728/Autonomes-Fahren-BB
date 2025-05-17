@@ -1,15 +1,17 @@
 import numpy as np
 import time
 from collections import deque
+import copy
 
 class LongitudinalControl:
     def __init__(self):
         # Speed limits
         self.max_speed = 105.0
-        self.min_speed = 50.0
+        self.min_speed = 45.0
 
         # Speed prediction weights
-        self.curvature_weight = 3.2
+        self.curvature_weight = 12
+        self.deviation_weight = 7
 
         # PID controller parameters
         self.kp = 1.0
@@ -23,13 +25,14 @@ class LongitudinalControl:
         self.integral_max = 6.0  # Anti-windup limit
 
         # Acceleration/brake scaling
-        self.accel_gain = 0.2
-        self.brake_gain = 0.03
+        self.accel_gain = 0.35
+        self.brake_gain = 0.02
 
         # Steering safety filter
         self.steer_safety_threshold = 0.9
         self.steer_history = deque(maxlen=5)
-        self.curvature_history = deque(maxlen=4)
+        self.deviation_history = deque(maxlen=6)
+        self.curvature_history = deque(maxlen=30)
 
 
     def predict_target_speed(self, trajectory):
@@ -37,6 +40,9 @@ class LongitudinalControl:
         closest_index = np.argmin(np.linalg.norm(trajectory - [48, 64], axis=1))
         trajectory = trajectory[closest_index:]
 
+        return (self.x_deviation_target_speed(copy.deepcopy(trajectory)) + self.curvature_target_speed(copy.deepcopy(trajectory))) / 2.0
+
+    def x_deviation_target_speed(self, trajectory):
         # get first n points
         n = min(15, len(trajectory))
         trajectory = trajectory[:n]
@@ -46,8 +52,37 @@ class LongitudinalControl:
 
         # calc target speed based on average x value of trajectory
         avg_x_deviation = np.mean(np.abs(trajectory[:, 0]))
-        self.curvature_history.append(avg_x_deviation)
-        return np.clip(self.max_speed - np.mean(self.curvature_history)  * self.curvature_weight, self.min_speed, self.max_speed)
+        self.deviation_history.append(avg_x_deviation)
+        return np.clip(self.max_speed - np.mean(self.deviation_history) * self.deviation_weight, self.min_speed, self.max_speed)
+
+
+    def curvature_target_speed(self, trajectory):
+                # Check if the trajectory is valid
+        if trajectory is None or len(trajectory) < 3:
+            curvature = 0.0
+        else:
+            # Limit n to the number of available points
+            n = len(trajectory)
+
+            # Calculate curvature for consecutive triplets of points
+            curvatures = []
+            for i in range(n - 2):  # Ensure we have at least 3 points for each triplet
+                p1, p2, p3 = map(np.array, [trajectory[i], trajectory[i + 1], trajectory[i + 2]])
+                vec1, vec2 = p2 - p1, p3 - p2
+                norm1, norm2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
+
+                if norm1 > 1e-4 and norm2 > 1e-4:
+                    dot = np.clip(np.dot(vec1, vec2) / (norm1 * norm2), -1.0, 1.0)
+                    curvature = np.arccos(dot)
+                    curvatures.append(abs(curvature))
+
+            # Calculate the average curvature
+            curvature = np.mean(curvatures) if curvatures else 0.0
+        
+        self.curvature_history.append(curvature)
+        curvature_factor = 1.0 - self.curvature_weight * np.clip(np.mean(self.curvature_history) / np.pi, 0.0, 1.0)
+        target_speed = self.max_speed * curvature_factor
+        return np.clip(target_speed, self.min_speed * 0.7, self.max_speed)
 
 
     def control(self, current_speed, target_speed, steer):
@@ -79,7 +114,7 @@ class LongitudinalControl:
             brake = np.clip(-control_value * self.brake_gain, 0.0, 1.0)
             gas = 0.0
 
-        if steer > 0.5:
+        if steer > 0.7:
             gas *= 0.5
 
         return gas, brake
