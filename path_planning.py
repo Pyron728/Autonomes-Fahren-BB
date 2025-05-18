@@ -284,6 +284,8 @@ class PathPlanning:
         
         # Create a spline of the path
         # Use the cumulative lengths as the parameter to ensure accuracy along curves
+        if total_length == 0 or np.isnan(total_length):
+            total_length = 1
         tck, u = splprep([points[:, 0], points[:, 1]], u=cumulative_lengths/total_length, s=0)
         
         # Sample the spline at uniform distances
