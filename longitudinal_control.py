@@ -10,7 +10,7 @@ class LongitudinalControl:
         self.min_speed = 35.0
 
         # Speed prediction weights
-        self.curvature_weight = 11.3
+        self.curvature_weight = 11.8
         self.deviation_weight = 9
 
         # threshhold for curvature and deviation to act as deadzone
@@ -18,7 +18,7 @@ class LongitudinalControl:
         self.deviation_threshold = 3
 
         # Speed limits for hairpin turns
-        self.hairpin_curvature = 0.34
+        self.hairpin_curvature = 0.28
         self.hairpin_curvature_weight = 8
         self.hairpin_max_speed = 55
         self.hairpin_timeout = 40
@@ -36,7 +36,7 @@ class LongitudinalControl:
 
         # Acceleration/brake scaling
         self.accel_gain = 1.1
-        self.brake_gain = 0.019
+        self.brake_gain = 0.02
 
         # Steering safety filter
         self.steer_safety_threshold = 0.9
@@ -140,7 +140,15 @@ class LongitudinalControl:
 
         # Convert control value to gas/brake output
         if control_value > 0:
-            gas = np.clip(control_value * self.accel_gain, 0.0, 0.5 if self.hairpin_timeout_counter < self.hairpin_timeout else 1.0)
+            max_gas_val = 1.0
+
+            # coming out of hairpin, start with maximum of 0 gas and steadily increase
+            if self.hairpin_timeout_counter < 5:
+                max_gas_val = 0.0
+            elif self.hairpin_timeout_counter < self.hairpin_timeout:
+                max_gas_val = 1 - ((self.hairpin_timeout - self.hairpin_timeout_counter - 5) / self.hairpin_timeout - 5) * 0.8
+
+            gas = np.clip(control_value * self.accel_gain, 0.0, max_gas_val)
             brake = 0.0
         else:
             max_brake_val = 0.4 if self.hairpin_timeout_counter < self.hairpin_timeout else 1.0

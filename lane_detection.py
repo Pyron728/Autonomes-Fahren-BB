@@ -183,7 +183,14 @@ class LaneDetection:
 		
 		# mask the car and then normalize to 0-255
 		magnitude[64:78, 44:52] = 0
-		normalized = (magnitude - np.min(magnitude)) / (np.max(magnitude) - np.min(magnitude)) * 255
+
+		norm_val = np.max(magnitude) - np.min(magnitude)
+		if (norm_val == 0):
+			# set every value that is not 0 to 255
+			normalized = np.zeros_like(magnitude)
+			normalized[magnitude != 0] = 255
+		else:
+			normalized = (magnitude - np.min(magnitude)) / (np.max(magnitude) - np.min(magnitude)) * 255
 
 		return normalized[1:-1, 1:-1]  # Remove one pixel from each side to avoid border effects
 

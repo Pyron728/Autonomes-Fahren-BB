@@ -63,7 +63,11 @@ class LateralControl:
         WB = 6  # Wheelbase of the car
 
         # Calculate the dynamic lookahead distance
-        Lf = self.pure_pursuit_k * speed
+        Lf = self.pure_pursuit_k * max(speed, 0.1)
+
+        # for extra tight corners, dont look too far ahead to not cut the corner too much
+        if (speed < 60):
+            Lf = 0.8 * Lf
 
         # Find the lookahead point
         closest_index = np.argmin(np.linalg.norm(trajectory - self._car_position, axis=1))
