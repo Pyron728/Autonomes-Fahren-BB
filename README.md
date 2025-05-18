@@ -149,11 +149,12 @@ Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung de
 ### 3.2 Querregelung – `lateral_control.py`
 
 Dieses Modul implementiert einen vereinfachten **Stanley Controller**, der auf Querabweichung (Crosstrack Error, CTE) und Tangentenwinkel der Trajektorie basiert. Die Steuerung erfolgt rein positionsbasiert, wobei die aktuelle Fahrzeugposition fest auf `[48, 62]` gesetzt ist.
+Zusätzlich verfügt der Regler über eine Dämpfung bei hohen Geschwindigkeiten um hier Schwindungen zu unterbinden.
 
 Weiterhin wird für höhere Geschwindigkeiten ein **Pure Pursuit Controller** implementiert, der sich in einer von der Geschwindikeit (mit dem parameter `pure_pursuit_k` kontrollierbar) abhängigen Distanz vor dem Fahrzeug einen Punkt der Trajektorie aussucht und mithilfe eines Bycicle Models mit simpler Vektorenrechnung den nötigen Lenkwinkel errechnet um diesen Punkt zu schneiden.
 
 Mit dem Parameter ``pure_pursuit_speed`` lässt sich die Geschwindigkeit einstellen, ab der der Pure Pursuit Controller benutzt wird.
-Bei experiementellem Erproben hat sich herausgestellt, dass für diese Simulation ein Pure Pursuit Controller weitaus besser geeignet ist und auch in engen Kurven völlig ausreicht. Daher wurde dieser Parameter hier auf `0` gesetzt um konstant den Pure Pursuit Controller zu nutzen.
+Bei experiementellem Erproben hat sich herausgestellt, dass für diese Simulation ein Pure Pursuit Controller weitaus besser geeignet ist und auch in engen Kurven völlig ausreicht. Daher wurde dieser Parameter hier auf `0` gesetzt um konstant den Pure Pursuit Controller zu nutzen (sehr hohe Zahl um nur mit dem Stanley-Regler zu fahren).
 
 #### Eigenschaften
 
@@ -163,6 +164,11 @@ Bei experiementellem Erproben hat sich herausgestellt, dass für diese Simulatio
 - `pure_pursuit_speed`: Geschwindigkeit, ab der der Pure Pursuit Controller verwendet wird
 - `pure_pursuit_k`: Steuert die Distanz vor dem Auto, in der sich der angestrebte Punkt der Pure Pursuit Reglers befindet
 
+#### Vergleich der Regler
+
+Da der Stanley-Regler direkt versucht die Krümmung der Trajektorie nachzuahmen kann er in engen Kurven deutlich besser auf der Trajektorie bleiben wie der Pure-Pursuit Regler, tendiert aber bei höheren Geschwindigkeiten sehr schnell zum Schwingen, was mit guter Parametrieung zwar lange unterbunden aber nie komplett verhindert werden kann.
+
+Der Pure-Pursuit Regler folgt in engen Kurven zwar nicht 100% der Trajektorie, sondern schneidet die Kurve etwas. Da dies aber in diesem Kontext sogar ein gewünschtes Verhalten ist (solang es nicht so stark passiert, dass er über das Gras fährt), wird hier rein der Pure Pursuit Controller verwendet.
 
 ### 3.4 Längsregelung – `longitudinal_control.py`
 
