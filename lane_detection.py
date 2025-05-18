@@ -9,6 +9,7 @@ class LaneDetection:
 		self.debug_image = np.zeros((10, 10, 3), dtype=np.uint8)
 		self.last_left_points = []
 		self.last_right_points = []
+		self.car_pos = np.array([48, 64])  # car position in the image
 		pass
 
 	def detect(self, state_image):
@@ -16,21 +17,60 @@ class LaneDetection:
 		if self.frame_counter < 60:
 			return self.last_left_points, self.last_right_points
 
+		# hide status bar in bottom of image
 		masked_img = state_image[0:84, ...]
+
+		# convert to binary black and white image to remove all variation in color
 		binary_img = self.convert_to_binary(masked_img)
 
 		# Convert to grayscale and preprocess
 		filtered = self.filterEdges(binary_img)
 		self.applyTreshold(filtered, np.percentile(filtered, 80))
 
+		# cluster all points in image using dbscan and return two biggest and closest to car
+		try:
+			lane_1, lane_2 = self.cluster_points_to_lanes(filtered)
+		except ValueError as e:
+			return self.last_left_points, self.last_right_points
+
+		# differentiate left and right lane based on relative position to car
+		left_points, right_points = self.differentiate_lanes(lane_1, lane_2)
+
+		self.print_debug_image(filtered, left_points, right_points, state_image)
+
+		self.last_left_points = left_points
+		self.last_right_points = right_points
+		return left_points, right_points
+
+
+	def differentiate_lanes(self, lane_1, lane_2):
+		# Calculate the center of the two clusters
+		lane_1_center = np.mean(lane_1, axis=0)
+		lane_2_center = np.mean(lane_2, axis=0)
+		if lane_1_center[0] < lane_2_center[0]:
+			left_points = lane_1
+			right_points = lane_2
+		else:
+			left_points = lane_2
+			right_points = lane_1
+
+		# sort points based on neighboring points
+		left_points = self.sort_edge_points(self.car_pos, left_points)
+		right_points = self.sort_edge_points(self.car_pos, right_points)
+
+		left_points = left_points.astype(np.int32)
+		right_points = right_points.astype(np.int32)
+		return left_points, right_points
+
+	def cluster_points_to_lanes(self, image):
 		# Extract edge points
-		edge_points = np.column_stack(np.where(filtered == 255))
+		edge_points = np.column_stack(np.where(image == 255))
 
 		# switch x and y coordinates converting to correct coordinate system
 		edge_points = np.array([(point[1], point[0]) for point in edge_points])
 
 		if len(edge_points) < 0 or edge_points.shape[0] == 0:
-			return self.last_left_points, self.last_right_points
+			raise ValueError("No edge points found in the image.")
 
 		# Use DBSCAN for clustering
 		dbscan = DBSCAN(eps=3, min_samples=1).fit(edge_points)  # eps: how close points need to be to be considered in the same cluster
@@ -44,11 +84,10 @@ class LaneDetection:
 		clusters = {label: points for label, points in clusters.items() if len(points) > 15}
 
 		# Compute closest points to the car position for each cluster
-		car_pos = np.array([48, 64])
 		sorted_clusters = []
 		for label, points in clusters.items():
 			# Calculate the distance from the car position to the cluster points
-			distances = np.linalg.norm(points - car_pos, axis=1)
+			distances = np.linalg.norm(points - self.car_pos, axis=1)
 			# Find the closest point in the cluster to the car position
 			closest_point_index = np.argmin(distances)
 			sorted_clusters.append((distances[closest_point_index], points))
@@ -56,56 +95,12 @@ class LaneDetection:
 		# Take the two largest clusters with the closest points to the car position
 		sorted_clusters.sort(key=lambda x: x[0])  # Sort by distance
 		if len(sorted_clusters) < 2:
-			# print("Not enough clusters found.")
-			return self.last_left_points, self.last_right_points
+			raise ValueError("Not enough cluster found.")
 
 		# differentiate left and right
 		lane_1 = sorted_clusters[0][1].astype(np.float64)
 		lane_2 = sorted_clusters[1][1].astype(np.float64)
-
-		# Calculate the center of the two clusters
-		lane_1_center = np.mean(lane_1, axis=0)
-		lane_2_center = np.mean(lane_2, axis=0)
-		if lane_1_center[0] < lane_2_center[0]:
-			left_points = lane_1
-			right_points = lane_2
-		else:
-			left_points = lane_2
-			right_points = lane_1
-
-		left_points = self.sort_edge_points(car_pos, left_points)
-		right_points = self.sort_edge_points(car_pos, right_points)
-
-		left_points = left_points.astype(np.int32)
-		right_points = right_points.astype(np.int32)
-
-		debug_image = np.zeros((filtered.shape[0], filtered.shape[1], 3), dtype=np.uint8)
-		debug_image = state_image[0:filtered.shape[0], 0:filtered.shape[1], :]
-		# color left and right lane points, left is blue, right is red
-		i = 0
-		for point in left_points:
-			if 0 < point[0] < 96 and 0 < point[1] < 84:
-				debug_image[int(point[1]), int(point[0])] = [255, int(i), 0]
-				i += 255 / len(left_points)
-		i = 0
-		for point in right_points:
-			if 0 < point[0] < 96 and 0 < point[1] < 84:
-				debug_image[int(point[1]), int(point[0])] = [0, int(i), 255]
-				i += 255 / len(right_points)
-
-		# seperatly mark first and last point of the lanes
-		if len(left_points) > 0:
-			debug_image[int(left_points[0][1]), int(left_points[0][0])] = [255, 255, 255]
-			debug_image[int(left_points[-1][1]), int(left_points[-1][0])] = [255, 255, 255]
-		if len(right_points) > 0:
-			debug_image[int(right_points[0][1]), int(right_points[0][0])] = [255, 255, 255]
-			debug_image[int(right_points[-1][1]), int(right_points[-1][0])] = [255, 255, 255]
-
-		self.debug_image = debug_image
-
-		self.last_left_points = left_points
-		self.last_right_points = right_points
-		return left_points, right_points
+		return lane_1, lane_2
 
 	def convert_to_binary(self, image):
 		# get all curb points (color 255,0,0 or 255,255,255)
@@ -117,7 +112,7 @@ class LaneDetection:
 		# Reshape the image into a 2D array of pixels (rows * cols, channels)
 		pixels = image.reshape(-1, image.shape[-1])
 
-		# Apply KMeans clustering with 2 clusters
+		# Apply KMeans clustering with 2 clusters to colors of image to get two "groups" of colors
 		kmeans = KMeans(n_clusters=2, random_state=0).fit(pixels)
 		labels = kmeans.labels_
 
@@ -137,6 +132,7 @@ class LaneDetection:
 
 		return binary_image
 
+	# sort the points of the lane based on neighboring points, starting from the bottom
 	def sort_edge_points(self, car_pos, edge_points):
 		if (len(edge_points) == 0):
 			return np.array([])
@@ -170,6 +166,7 @@ class LaneDetection:
 
 		return np.array(sorted_points)
 
+	# filter the image to get the edges using a laplacian kernel
 	def filterEdges(self, image):
 		# laplacian edge detection kernel
 		kernel = np.array([[-1, -1, -1],
@@ -178,7 +175,7 @@ class LaneDetection:
 		
 		magnitude = self.convolve2d(image, kernel)
 		
-		# erosion to remove noise and small edges
+		# 2x2 erosion to remove noise and double pixels in edges
 		magnitude = self.erosion(magnitude)
 		
 		# mask the car and then normalize to 0-255
@@ -193,6 +190,31 @@ class LaneDetection:
 			normalized = (magnitude - np.min(magnitude)) / (np.max(magnitude) - np.min(magnitude)) * 255
 
 		return normalized[1:-1, 1:-1]  # Remove one pixel from each side to avoid border effects
+
+	def print_debug_image(self, filtered, left_points, right_points, state_image):
+		debug_image = np.zeros((filtered.shape[0], filtered.shape[1], 3), dtype=np.uint8)
+		debug_image = state_image[0:filtered.shape[0], 0:filtered.shape[1], :]
+		# color left and right lane points, left is blue, right is red
+		i = 0
+		for point in left_points:
+			if 0 < point[0] < 96 and 0 < point[1] < 84:
+				debug_image[int(point[1]), int(point[0])] = [255, int(i), 0]
+				i += 255 / len(left_points)
+		i = 0
+		for point in right_points:
+			if 0 < point[0] < 96 and 0 < point[1] < 84:
+				debug_image[int(point[1]), int(point[0])] = [0, int(i), 255]
+				i += 255 / len(right_points)
+
+		# seperatly mark first and last point of the lanes
+		if len(left_points) > 0:
+			debug_image[int(left_points[0][1]), int(left_points[0][0])] = [255, 255, 255]
+			debug_image[int(left_points[-1][1]), int(left_points[-1][0])] = [255, 255, 255]
+		if len(right_points) > 0:
+			debug_image[int(right_points[0][1]), int(right_points[0][0])] = [255, 255, 255]
+			debug_image[int(right_points[-1][1]), int(right_points[-1][0])] = [255, 255, 255]
+
+		self.debug_image = debug_image
 
 	# apply kernel on 2d image, kernel can by any size, has to be quadratic with uneven sidelength
 	def convolve2d(self, image, kernel):
@@ -216,6 +238,7 @@ class LaneDetection:
 					output[i+1, j+1] = 0
 		return output
 
+	# set all values above threshold to 255 and all below to 0
 	def applyTreshold(self, img, threshold):
 		for i in range(img.shape[0]):
 			for j in range(img.shape[1]):

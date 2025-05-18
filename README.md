@@ -42,12 +42,31 @@ Dieses Modul erkennt linke und rechte Fahrspurbegrenzungen basierend auf Bildver
 
 #### Vorgehensweise
 
-1. **Vorverarbeitung**: Bild zuschneiden, Vorderwagen maskieren, Segmentierung via KMeans, Entfernen von Grasfarben.
+1. **Vorverarbeitung**: Bild zuschneiden, Segmentierung via KMeans (für genauere Erklärung siehe unten), Entfernen von Curbs durch matchen der Farben.
 2. **Kantenerkennung**: Laplace-Filter, Erosion, Normalisierung.
-3. **Clustering**: DBSCAN zur Erkennung zusammenhängender Punkte.
-4. **Sortierung**: Punkte werden nach Fahrzeugnähe geordnet.
+3. **Clustering**: DBSCAN zur Erkennung zusammenhängender Punkte um einzelne Lanes zu erkennen.
+4. **Sortierung**: Punkte werden nach Fahrzeugnähe geordnet und ins links und rechts unterschieden.
 5. **Fehlerbehandlung**: Fallback auf letzte gültige Spur bei Erkennungsfehlern.
 6. **Debug-Visualisierung**: Darstellung der Spurpunkte in der Simulation.
+
+#### Besonderheiten
+
+##### Clustering der Farben mithilfe von KMeans
+
+Der erste Ansatz war, das Bild einfach in ein Graubild umzuwandeln, bei dem jeder Pixel einfach der Durchschnitt aller drei Farbchannel ist.
+Dies funktioniert für die Standardfarben recht gut, scheitert jedoch bei vielen Farbkombinationen der zufälligen Farben.
+
+Hier wird der Ansatz verfolgt mithilfe eines KMeans Algorithmus, der Punkte in n-Dimensionalem Raum in eine Vorgegebene Anzahl an möglichst Zusammenhängenden Punkten einteilen kann, die unterschiedlichen Farben des Originalbildes in zwei Gruppen zu unterteilen (Straße/Hintergrund). Dies passiert, indem die drei Farbchannel der Pixel als Punkkoordinaten in 3-Dimensionalem Raum angesehen werden und anschließend alle Pixel mit der Farbe des Größeren Clusters auf 1 gesetzt werden. Der Rest bleibt 0.
+
+Dadurch bekommt man ein klares Schwarz-Weiß Bild, unabhängig von der Farbkombination von Straße und Hintergrund, auf das perfekt eine Kantenerkennung mittels Laplacefilter angewendet werden kann. 
+
+Visualisierbar mit `self.debug_image = binary_image` am ende der `detect()` Methode in der lane_detection.py.
+
+##### Erosion
+
+Nachdem ein Laplace-Filter über das Schwarz-Weiß Bild gelaufen ist, sind alle Kanten mit zwei Reihen an Pixeln markiert. Um dies zu verhindern, wird anschließend noch eine Erosion mit einem 2x2 Kernel über das Bild angewendet.
+
+Ein glücklicker Nebeneffekt hier ist, dass die Straßenmarkierungen hiermit auch fast vollkommen entfallen.
 
 ### 3.2 Pfadplanung – `path_planning.py`
 
@@ -131,40 +150,19 @@ Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung de
 
 Dieses Modul implementiert einen vereinfachten **Stanley Controller**, der auf Querabweichung (Crosstrack Error, CTE) und Tangentenwinkel der Trajektorie basiert. Die Steuerung erfolgt rein positionsbasiert, wobei die aktuelle Fahrzeugposition fest auf `[48, 62]` gesetzt ist.
 
+Weiterhin wird für höhere Geschwindigkeiten ein **Pure Pursuit Controller** implementiert, der sich in einer von der Geschwindikeit (mit dem parameter `pure_pursuit_k` kontrollierbar) abhängigen Distanz vor dem Fahrzeug einen Punkt der Trajektorie aussucht und mithilfe eines Bycicle Models mit simpler Vektorenrechnung den nötigen Lenkwinkel errechnet um diesen Punkt zu schneiden.
+
+Mit dem Parameter ``pure_pursuit_speed`` lässt sich die Geschwindigkeit einstellen, ab der der Pure Pursuit Controller benutzt wird.
+Bei experiementellem Erproben hat sich herausgestellt, dass für diese Simulation ein Pure Pursuit Controller weitaus besser geeignet ist und auch in engen Kurven völlig ausreicht. Daher wurde dieser Parameter hier auf `0` gesetzt um konstant den Pure Pursuit Controller zu nutzen.
+
 #### Eigenschaften
 
 * `k_e`: Verstärkung der Korrektur basierend auf Querfehler
 * `k_s`: Geschwindigkeitsdämpfung zur Stabilisierung bei höherem Tempo
 * `steering_gain`: Skalierung des Lenkergebnisses (z. B. zur Hardwareanpassung)
+- `pure_pursuit_speed`: Geschwindigkeit, ab der der Pure Pursuit Controller verwendet wird
+- `pure_pursuit_k`: Steuert die Distanz vor dem Auto, in der sich der angestrebte Punkt der Pure Pursuit Reglers befindet
 
-#### Methode
-
-```python
-control(trajectory: np.ndarray, speed: float) -> float
-```
-
-* **Input:**
-
-  * `trajectory`: geplante Trajektorie als Liste von 2D-Punkten (`np.ndarray`)
-  * `speed`: aktuelle Fahrzeuggeschwindigkeit
-* **Output:**
-
-  * berechneter Lenkwinkel in Radiant (float)
-
-#### Vorgehen
-
-1. Bestimmung des nächstgelegenen Punkts auf der Trajektorie vor dem Fahrzeug
-2. Berechnung der Trajektorientierung (Tangente)
-3. Projektion des Querfehlers auf die Vorderachse
-4. Anwendung der Stanley-Regelung:
-
-   $$
-   \delta = \theta + \arctan\left(\frac{k_e \cdot CTE}{v + k_s}\right)
-   $$
-
-   wobei $\theta$ der Tangentenwinkel ist.
-
----
 
 ### 3.4 Längsregelung – `longitudinal_control.py`
 
@@ -172,44 +170,41 @@ control(trajectory: np.ndarray, speed: float) -> float
 
 Die Längsregelung plant die Geschwindigkeit und erzeugt das Gas/Bremsverhalten mit einemmit einem **PID-Controller**. 
 
+Die Zielgeschwindigkeit wird abhängig von Krümmung der Trajektorie und durchschnittlicher ABweichung des X-Wert von der Mitte der Trajektorienpunkte berechnet.
+Wird eine hohe Krümmung in einer Trajektorie erkannt (weißt auf eine Hairpin Kurve hin), wechselt die Regelung in einen `Hairpin`-Modus, in dem nur die Krümmung für die Zielgeschwindigkeit beachtet wird. Dieser Modus besitzt auch einen "Cooldown", damit nicht direkt nach der Kurve wieder Vollgas gegeben wird, sondern dem Auto etwas Zeit gegeben wird komplett um die Kurve zu kommen.
+
+Die Kürmmungs- und x-Abweichungswerte werden auch jeweils über einen kurzen Zeitraum in einer Liste gespeichert und nur deren Durchschnitt verwendet um kleine Outlier in der Trajektorie zu kompensieren und einen sanften Kurvenein- und austritt zu garantieren. 
+
+Zudem kann während einer scharfen Kurve kein Gas gegeben werden und beim Übergang vom Hairpin Modues in den normalen Modus wird langsam immer mehr Gas "freigeschaltet" um einen Spinout zu vermeiden. 
+
+Es gibt auch "gain" Parameter für Bremse und Gas um die Reglerwerte nochmal extra kontrollieren zu können (z.B. um bei der Bremse das Blockieren der Räder zu verhindern).
+
 #### Eigenschaften
 
-* **Zielgeschwindigkeit basiert auf:**
-
-  * **Querabweichung:** größere Abweichung → geringere Zielgeschwindigkeit
-  * **Kurvigkeit:** höhere Kurvigkeit → geringere Zielgeschwindigkeit
 * **PID-Parameter:**
 
   * `kp`: Proportionalanteil
   * `ki`: Integralanteil
   * `kd`: Differentialanteil
-* **Sicherheitsmechanismen:**
+  * `max_speed`: Die maximale Zielgeschwindigkeit
+  * `min_speed`: Die minimale Zielgeschwindigkeit
+  * `curvature_weight`: Faktor wie stark die Krümmung die normale Zielgeschwindigkeit beinflusst
+  * `self.deviation_weight`: Faktor wie stark die x-Abweichung die normale Zielgeschwindigkeit beinflusst
+  * `curvature_threshold`: "Totzone" des Krümmungswertes, unter dem vollgas gegeben wird
+  * `deviation_threshold`: "Totzone" des Abweichungswertes, unter dem vollgas gegeben wird
 
+  * `hairpin_curvature`: Krümmung, bei der in den Hairpin-Modues gewechselt wird
+  * `hairpin_curvature_weight`: Einfluss der rümmung im Hairpin-Modues
+  * `hairpin_max_speed`: Maximalgeschwindigkeit im Hairpin-Modues
+  * `hairpin_timeout`: Anzahl der Frames, die der Regler nach der Kurve noch im Hairpin-Modus bleibt 
+
+  * `accel_gain`: Zusätzlicher Faktor für den Gas-Endwert
+  * `brake_gain`: Zusätzlicher Faktor für den Brems-Endwert 
+
+* **Sicherheitsmechanismen:**
   * `steer_safety_threshold`: deaktiviert Beschleunigung bei zu starker Lenkung
   * Anti-Windup für Integrator (`integral_max`)
   * Historienfilter für Glättung der Abweichung und Kurvigkeit
-
-#### Methoden
-
-##### `predict_target_speed(trajectory: np.ndarray) -> float`
-
-Berechnet die Zielgeschwindigkeit aus:
-
-* `x_deviation_target_speed()`: mittlere Querabweichung über die ersten 15 Punkte
-* `curvature_target_speed()`: mittlere Winkeländerung entlang der Trajektorie
-  → Beide Geschwindigkeiten werden gemittelt.
-
-##### `control(current_speed: float, target_speed: float, steer: float) -> Tuple[float, float]`
-
-* **Input:**
-
-  * `current_speed`: aktuelle Fahrzeuggeschwindigkeit
-  * `target_speed`: zuvor berechnete Zielgeschwindigkeit
-  * `steer`: Lenkwinkel (z. B. von `LateralControl`)
-* **Output:**
-
-  * `gas`: Gaswert (0–1)
-  * `brake`: Bremswert (0–1)
 
 #### Regelalgorithmus
 

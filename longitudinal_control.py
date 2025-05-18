@@ -6,22 +6,22 @@ import copy
 class LongitudinalControl:
     def __init__(self):
         # Speed limits
-        self.max_speed = 105.0
+        self.max_speed = 102.0
         self.min_speed = 35.0
 
         # Speed prediction weights
-        self.curvature_weight = 11.8
-        self.deviation_weight = 9
+        self.curvature_weight = 11
+        self.deviation_weight = 8
 
         # threshhold for curvature and deviation to act as deadzone
-        self.curvature_threshold = 0.05
-        self.deviation_threshold = 3
+        self.curvature_threshold = 0.06
+        self.deviation_threshold = 3.4
 
         # Speed limits for hairpin turns
-        self.hairpin_curvature = 0.28
-        self.hairpin_curvature_weight = 8
-        self.hairpin_max_speed = 55
-        self.hairpin_timeout = 40
+        self.hairpin_curvature = 0.19
+        self.hairpin_curvature_weight = 8.3
+        self.hairpin_max_speed = 53
+        self.hairpin_timeout = 15
         self.hairpin_timeout_counter = self.hairpin_timeout
 
         # PID controller parameters
@@ -36,7 +36,7 @@ class LongitudinalControl:
 
         # Acceleration/brake scaling
         self.accel_gain = 1.1
-        self.brake_gain = 0.02
+        self.brake_gain = 0.019
 
         # Steering safety filter
         self.steer_safety_threshold = 0.9
@@ -79,23 +79,7 @@ class LongitudinalControl:
         if trajectory is None or len(trajectory) < 3:
             curvature = 0.0
         else:
-            # Limit n to the number of available points
-            n = len(trajectory)
-
-            # Calculate curvature for consecutive triplets of points
-            curvatures = []
-            for i in range(n - 2):  # Ensure we have at least 3 points for each triplet
-                p1, p2, p3 = map(np.array, [trajectory[i], trajectory[i + 1], trajectory[i + 2]])
-                vec1, vec2 = p2 - p1, p3 - p2
-                norm1, norm2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
-
-                if norm1 > 1e-4 and norm2 > 1e-4:
-                    dot = np.clip(np.dot(vec1, vec2) / (norm1 * norm2), -1.0, 1.0)
-                    curvature = np.arccos(dot)
-                    curvatures.append(abs(curvature))
-
-            # Calculate the average curvature
-            curvature = np.mean(curvatures) if curvatures else 0.0
+            curvature = self.calc_curvature(trajectory)
         
         self.curvature_history.append(curvature)
         self.hairpin_curvature_history.append(curvature)
@@ -103,12 +87,13 @@ class LongitudinalControl:
         curv = max(0.0, float(np.mean(self.curvature_history)) - self.curvature_threshold)
 
 
+        # enter into hairpin mode if curvature is high
         if np.mean(self.hairpin_curvature_history) > self.hairpin_curvature:
             self.hairpin_timeout_counter = 0
         else:
             self.hairpin_timeout_counter += 1
 
-        # hairpin is recognized by a high curvature and points that wrap around and go back
+        # if is in hairpin mode, use other method to calculate target speed
         if self.hairpin_timeout_counter < self.hairpin_timeout:
             curvature_factor = 1.0 - self.hairpin_curvature_weight * np.clip(curv / np.pi, 0.0, 1.0)
             target_speed = self.hairpin_max_speed * curvature_factor
@@ -124,9 +109,28 @@ class LongitudinalControl:
 
         return np.clip(target_speed, self.min_speed, self.max_speed), is_hairpin
 
+    def calc_curvature(self, trajectory):
+        # Limit n to the number of available points
+        n = len(trajectory)
+
+        # Calculate curvature for consecutive triplets of points
+        curvatures = []
+        for i in range(n - 2):  # Ensure we have at least 3 points for each triplet
+            p1, p2, p3 = map(np.array, [trajectory[i], trajectory[i + 1], trajectory[i + 2]])
+            vec1, vec2 = p2 - p1, p3 - p2
+            norm1, norm2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
+
+            if norm1 > 1e-4 and norm2 > 1e-4:
+                dot = np.clip(np.dot(vec1, vec2) / (norm1 * norm2), -1.0, 1.0)
+                curvature = np.arccos(dot)
+                curvatures.append(abs(curvature))
+
+        # Calculate the average curvature
+        curvature = np.mean(curvatures) if curvatures else 0.0
+        return curvature
 
     def control(self, current_speed, target_speed, steer):
-        # PID controller
+    # PID controller
         speed_error = target_speed - current_speed
         dt = 0.04
 
@@ -143,10 +147,10 @@ class LongitudinalControl:
             max_gas_val = 1.0
 
             # coming out of hairpin, start with maximum of 0 gas and steadily increase
-            if self.hairpin_timeout_counter < 5:
+            if self.hairpin_timeout_counter < 11:
                 max_gas_val = 0.0
             elif self.hairpin_timeout_counter < self.hairpin_timeout:
-                max_gas_val = 1 - ((self.hairpin_timeout - self.hairpin_timeout_counter - 5) / self.hairpin_timeout - 5) * 0.8
+                max_gas_val = 1 - ((self.hairpin_timeout - self.hairpin_timeout_counter - 10) / self.hairpin_timeout - 10) * 0.9
 
             gas = np.clip(control_value * self.accel_gain, 0.0, max_gas_val)
             brake = 0.0
