@@ -74,12 +74,22 @@ Dieses Modul plant eine Trajektorie in Form von Wegpunkten innerhalb der Fahrspu
 
 #### Überblick
 
-Das System nutzt drei aufeinander aufbauende **Stages**, die modular aktiviert werden können.
+Das System nutzt 3 (mit Startup 4) **Stages**, die modular aktiviert werden können.
+
+
+#### Datenvorbereitung:
+
+   * Am Anfang werden die linke und rechte Fahrspurpunkte auf dieselbe Länge geschnitten. Nach Berechnung des Mittelpfades werden außerdem die Punkte hinter dem Auto entfernt.
+
+#### Stage 0: Startup-Modus (`startup_mode = True`)
+
+* In den ersten Frames wird ein gerader Pfad nach vorne generiert, um den ursprünglichen Zoom-In besser zu handeln.
 
 #### Stage 1: Mittelspurpfad (`just_use_middle_path = True`)
 
 * Berechnet indexweise die Mitte zwischen linker und rechter Spur.
-* Robust und standardmäßig aktiviert.
+* Sehr Robust und standardmäßig aktiviert, auf diese Stage wurden die Parameter getuned.
+* Hinweis: Durch die die Datenvorbereitung stimmen die Index teilweise nicht überein bzw. der gegenüberliegende Punkt der linken Spur ist nicht der richtige gleiche Index der Rechten Spur. Dies führt jedoch dazu, dass die Kurve am Anfang "natürlich geschnitten" wird und sobald die Indexe sich wieder beruhigen, man schon eine verbesserte Mittellinie gefahren ist.
 
 #### Stage 2: Geradenerkennung (`check_straight_line = False`)
 
@@ -89,7 +99,7 @@ Das System nutzt drei aufeinander aufbauende **Stages**, die modular aktiviert w
 
 #### Stage 3: Vektorbasierte Optimierung (`just_use_vectors = False`)
 
-Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung der Tangentenrichtungen. Da bei manchen Tracks bzw. Kurven dieser Pfad jedoch zum Ausreßen geführt hat, ist standartmäßig die Mittelspur aktiv, da diese Robuster ist un der Score auch gut genug war und nicht diese Stage:
+Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung der Tangentenrichtungen. Da bei manchen Tracks bzw. Kurven dieser Ansatz jedoch zum Ausreißen geführt hat, ist standartmäßig die Mittelspur aktiv, da diese robuster und performanter ist.
 
 ##### Funktionsweise
 
@@ -114,23 +124,17 @@ Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung de
 
 5. **Zickzack-Erkennung**:
 
-   * Entfernt oszillierende Pfade über Winkelgrenzen, um einzelne Ausreßerpunkte zu entfernen.
-
-6. **Entfernung zu langer Segmente**:
-
-   * Überlange Streckensegmente werden entfernt, um die Pfaddichte einheitlich zu halten.
+   * Entfernt oszillierende Pfade über zu große Abstnde von benachbarten Punkten, um einzelne Ausreißerpunkte zu entfernen.
 
 
+#### Spezialfälle( Keine Spuren oder nur eine Seite gegeben):
 
-#### Spezialfälle
+* **Notfallpfad**: Wenn keine Spur oder nur die linke bzw. rechte Spur gegeben wird, wird ein gerader Pfad nach vorn oder zur erkannten Seite erzeugt.
 
-* **Startmodus**: In den ersten Frames wird ein gerader Pfad generiert, da hier die gesamte Strecke sichtbar ist.
-* **Notfallpfad**: Wenn keine Spur erkannt wird, wird ein alternativer Pfad nach vorn oder entlang der erkannten Seite erzeugt.
+#### Datennachbereitung:
 
-#### Resampling:
-
-   * Es wird immer ein Resampling durchgeführt, um einen gleichmäßiger Abstand der Punkte zu gewährleisten, der sich an den Test-Modulen orientiert. Es wird die insgesamte Länge berechnet und dann mittels Interpolation die Anzahl an Punktne erstellt, die der gewünschten Länge entsprechen (z.B. 6.5 Pixel).
-
+   * Es wird am Ende immer ein Resampling mit Splines durchgeführt, um einen gleichmäßiger Abstand der Punkte zu gewährleisten, der sich an den Test-Modulen orientiert. Es wird die insgesamte Länge berechnet und mittels der gewünschten Länge (z.B. 6.5 Pixel) aus der Spline ein Pfad mit X Punkten erstellt.
+   
 #### Krümmungsberechnung
 
 * Die Krümmung wird über drei Referenzpunkte (Anfang, Mitte, Ende) berechnet.
@@ -142,11 +146,11 @@ Diese Stage optimiert den Pfad entlang der Mittelspur unter Berücksichtigung de
 | `desired_distance`    | Abstand zwischen Wegpunkten im finalen Pfad             | `6.5`        |
 | `adjustment_weight`   | Gewichtung für Kurvenanpassung in der Vektoroptimierung | `2.0`        |
 | `min_curvature_value` | Minimaler Krümmungswert zur numerischen Stabilisierung  | `0.05`       |
-| `startup_counter`     | "Frames", wie lange der Startup-Mode halten soll        | `60`       |
+| `startup_counter`     | "Frames", wie lange der Startup-Mode halten soll        | `60`         |
 
 
 
-### 3.2 Querregelung – `lateral_control.py`
+### 3.3 Querregelung – `lateral_control.py`
 
 Dieses Modul implementiert einen vereinfachten **Stanley Controller**, der auf Querabweichung (Crosstrack Error, CTE) und Tangentenwinkel der Trajektorie basiert. Die Steuerung erfolgt rein positionsbasiert, wobei die aktuelle Fahrzeugposition fest auf `[48, 62]` gesetzt ist.
 Zusätzlich verfügt der Regler über eine Dämpfung bei hohen Geschwindigkeiten um hier Schwindungen zu unterbinden.
