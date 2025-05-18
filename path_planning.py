@@ -439,25 +439,6 @@ class PathPlanning:
         closest_left_idx = np.argmin(left_distances)
         closest_right_idx = np.argmin(right_distances)
         
-        # Get the closest segment on each boundary
-        # For left boundary
-        if closest_left_idx == 0:
-            left_segment = left_boundary[:2]
-        elif closest_left_idx == len(left_boundary) - 1:
-            left_segment = left_boundary[-2:]
-        else:
-            left_segment = left_boundary[closest_left_idx-1:closest_left_idx+2]
-        
-        # For right boundary
-        if closest_right_idx == 0:
-            right_segment = right_boundary[:2]
-        elif closest_right_idx == len(right_boundary) - 1:
-            right_segment = right_boundary[-2:]
-        else:
-            right_segment = right_boundary[closest_right_idx-1:closest_right_idx+2]
-        
-        # Now check if the point is between these two segments
-        # Calculate the line connecting the closest points on each boundary
         left_closest = left_boundary[closest_left_idx]
         right_closest = right_boundary[closest_right_idx]
         
