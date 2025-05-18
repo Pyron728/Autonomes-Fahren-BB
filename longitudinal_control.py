@@ -21,7 +21,7 @@ class LongitudinalControl:
         self.hairpin_curvature = 0.34
         self.hairpin_curvature_weight = 8
         self.hairpin_max_speed = 55
-        self.hairpin_timeout = 30
+        self.hairpin_timeout = 40
         self.hairpin_timeout_counter = self.hairpin_timeout
 
         # PID controller parameters

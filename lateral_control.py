@@ -14,7 +14,7 @@ class LateralControl:
         self.steering_gain = 1
 
         self.pure_pursuit_speed = 0
-        self.pure_pursuit_k = 0.37  # Proportionality constant for lookahead distance
+        self.pure_pursuit_k = 0.34  # Proportionality constant for lookahead distance
 
         self.closest_traj_point = [0, 0]
 
