@@ -19,6 +19,7 @@ def run(env, input_controller: InputController):
     longitudinal_control = LongitudinalControl()
 
     seed = int(np.random.randint(0, int(1e6)))
+    seed = 68158
     state_image, info = env.reset(seed=seed)
     total_reward = 0.0
 
@@ -27,6 +28,9 @@ def run(env, input_controller: InputController):
     plt.show()
     speed_history = []
     target_speed_history = []
+    accel_history = []
+    brake_history = []
+    steer_history = []
 
     while not input_controller.quit:
         #left_lane_boundaries, right_lane_boundaries = lane_detection.detect(state_image)
@@ -45,6 +49,9 @@ def run(env, input_controller: InputController):
 
         speed_history.append(info["speed"])
         target_speed_history.append(target_speed)
+        accel_history.append(acceleration)
+        brake_history.append(braking)
+        steer_history.append(steering_angle)
 
         cv_image = np.asarray(state_image, dtype=np.uint8)
         way_points = np.array(way_points, dtype=np.int32)
@@ -57,6 +64,7 @@ def run(env, input_controller: InputController):
         for point in right_points:
             if 0 < point[0] < 96 and 0 < point[1] < 84:
                 cv_image[int(point[1]), int(point[0])] = [0, 0, 255]
+        cv_image[int(lateral_control.closest_traj_point[1]), int(lateral_control.closest_traj_point[0])] = [0, 0, 255]
 
         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
         cv_image = cv2.resize(cv_image, (cv_image.shape[1] * 6, cv_image.shape[0] * 6))
@@ -65,8 +73,16 @@ def run(env, input_controller: InputController):
 
         # Longitudinal control plot
         plt.gcf().clear()
+        plt.subplot(2, 1, 1)
         plt.plot(speed_history, c="green")
         plt.plot(target_speed_history)
+
+        # second plot for accel and brake and steer
+        plt.subplot(2, 1, 2)
+        plt.plot(accel_history, c="green")
+        plt.plot(brake_history, c="red")
+        plt.plot(steer_history, c="blue")
+
         try:
             fig.canvas.flush_events()
         except:

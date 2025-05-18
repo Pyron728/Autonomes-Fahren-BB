@@ -1,5 +1,5 @@
+from operator import is_
 import numpy as np
-import time
 from collections import deque
 import copy
 
@@ -7,40 +7,55 @@ class LongitudinalControl:
     def __init__(self):
         # Speed limits
         self.max_speed = 105.0
-        self.min_speed = 45.0
+        self.min_speed = 35.0
 
         # Speed prediction weights
-        self.curvature_weight = 12
-        self.deviation_weight = 7
+        self.curvature_weight = 11.3
+        self.deviation_weight = 9
+
+        # threshhold for curvature and deviation to act as deadzone
+        self.curvature_threshold = 0.05
+        self.deviation_threshold = 3
+
+        # Speed limits for hairpin turns
+        self.hairpin_curvature = 0.34
+        self.hairpin_curvature_weight = 8
+        self.hairpin_max_speed = 55
+        self.hairpin_timeout = 30
+        self.hairpin_timeout_counter = self.hairpin_timeout
 
         # PID controller parameters
-        self.kp = 1.0
+        self.kp = 1.2
         self.ki = 0.05
         self.kd = 0.03
 
         # PID internal state
         self.prev_error = 0.0
         self.integral = 0.0
-        self.last_time = time.time()
         self.integral_max = 6.0  # Anti-windup limit
 
         # Acceleration/brake scaling
-        self.accel_gain = 0.35
-        self.brake_gain = 0.02
+        self.accel_gain = 1.1
+        self.brake_gain = 0.019
 
         # Steering safety filter
         self.steer_safety_threshold = 0.9
-        self.steer_history = deque(maxlen=5)
+        self.steer_history = deque(maxlen=4)
         self.deviation_history = deque(maxlen=6)
-        self.curvature_history = deque(maxlen=30)
-
+        self.curvature_history = deque(maxlen=20)
+        self.hairpin_curvature_history = deque(maxlen=1)
 
     def predict_target_speed(self, trajectory):
         # cut all points that are behind the car
         closest_index = np.argmin(np.linalg.norm(trajectory - [48, 64], axis=1))
         trajectory = trajectory[closest_index:]
 
-        return (self.x_deviation_target_speed(copy.deepcopy(trajectory)) + self.curvature_target_speed(copy.deepcopy(trajectory))) / 2.0
+        deviation_speed = self.x_deviation_target_speed(copy.deepcopy(trajectory))
+        (curvature_speed, is_hairpin) = self.curvature_target_speed(copy.deepcopy(trajectory))
+        if is_hairpin:
+            return curvature_speed
+
+        return (curvature_speed + deviation_speed) / 2.0
 
     def x_deviation_target_speed(self, trajectory):
         # get first n points
@@ -53,7 +68,10 @@ class LongitudinalControl:
         # calc target speed based on average x value of trajectory
         avg_x_deviation = np.mean(np.abs(trajectory[:, 0]))
         self.deviation_history.append(avg_x_deviation)
-        return np.clip(self.max_speed - np.mean(self.deviation_history) * self.deviation_weight, self.min_speed, self.max_speed)
+
+        deviation = max(0, float(np.mean(self.deviation_history)) - self.deviation_threshold)
+
+        return np.clip(self.max_speed - deviation * self.deviation_weight, self.min_speed, self.max_speed)
 
 
     def curvature_target_speed(self, trajectory):
@@ -80,23 +98,37 @@ class LongitudinalControl:
             curvature = np.mean(curvatures) if curvatures else 0.0
         
         self.curvature_history.append(curvature)
-        curvature_factor = 1.0 - self.curvature_weight * np.clip(np.mean(self.curvature_history) / np.pi, 0.0, 1.0)
-        target_speed = self.max_speed * curvature_factor
-        return np.clip(target_speed, self.min_speed * 0.7, self.max_speed)
+        self.hairpin_curvature_history.append(curvature)
+
+        curv = max(0.0, float(np.mean(self.curvature_history)) - self.curvature_threshold)
+
+
+        if np.mean(self.hairpin_curvature_history) > self.hairpin_curvature:
+            self.hairpin_timeout_counter = 0
+        else:
+            self.hairpin_timeout_counter += 1
+
+        # hairpin is recognized by a high curvature and points that wrap around and go back
+        if self.hairpin_timeout_counter < self.hairpin_timeout:
+            curvature_factor = 1.0 - self.hairpin_curvature_weight * np.clip(curv / np.pi, 0.0, 1.0)
+            target_speed = self.hairpin_max_speed * curvature_factor
+            
+            # if hairpin is just passed, take it a bit slower to not spin out
+            if self.hairpin_timeout_counter > 2:
+                target_speed -= 10
+            is_hairpin = True
+        else:
+            curvature_factor = 1.0 - self.curvature_weight * np.clip(curv / np.pi, 0.0, 1.0)
+            target_speed = self.max_speed * curvature_factor
+            is_hairpin = False
+
+        return np.clip(target_speed, self.min_speed, self.max_speed), is_hairpin
 
 
     def control(self, current_speed, target_speed, steer):
-
-        # Steering safety - if we steer too strong too long, no gas/brakes
-        self.steer_history.append(abs(steer))
-        if np.mean(self.steer_history) > self.steer_safety_threshold:
-            return 0.0, 0.0
-
         # PID controller
         speed_error = target_speed - current_speed
-        current_time = time.time()
-        dt = max(current_time - self.last_time, 0.01)
-        self.last_time = current_time
+        dt = 0.04
 
         self.integral += speed_error * dt
         self.integral = np.clip(self.integral, -self.integral_max, self.integral_max)
@@ -108,13 +140,22 @@ class LongitudinalControl:
 
         # Convert control value to gas/brake output
         if control_value > 0:
-            gas = np.clip(control_value * self.accel_gain, 0.0, 1.0)
+            gas = np.clip(control_value * self.accel_gain, 0.0, 0.5 if self.hairpin_timeout_counter < self.hairpin_timeout else 1.0)
             brake = 0.0
         else:
-            brake = np.clip(-control_value * self.brake_gain, 0.0, 1.0)
+            max_brake_val = 0.4 if self.hairpin_timeout_counter < self.hairpin_timeout else 1.0
+            brake = np.clip(-control_value * self.brake_gain, 0.0, max_brake_val)
             gas = 0.0
 
-        if steer > 0.7:
-            gas *= 0.5
+        if abs(steer) > 0.7:
+            gas = np.clip(gas, 0.0, 0.7)
+        elif abs(steer) > 0.5:
+            gas = np.clip(gas, 0.0, 0.9)
+
+        # Steering safety - if we steer too strong too long, no gas/brakes
+        self.steer_history.append(abs(steer))
+        if np.mean(self.steer_history) > self.steer_safety_threshold:
+            gas = np.clip(gas, 0.0, 0.2)
+            brake = np.clip(brake, 0.0, 0.2)
 
         return gas, brake

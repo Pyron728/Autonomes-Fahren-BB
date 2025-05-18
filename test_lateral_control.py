@@ -59,7 +59,8 @@ def run(env, input_controller: InputController):
 
         # Step the environment
         input_controller.update()
-        a = [steering_angle, acceleration, braking]
+        a = [steering_angle, input_controller.accelerate, input_controller.brake]
+        # a = [steering_angle, acceleration, braking]
         state_image, r, done, trunc, info = env.step(a)
         total_reward += r
 
